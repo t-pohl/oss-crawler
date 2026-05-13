@@ -36,9 +36,24 @@ def resolve_school(value: str) -> str:
 
 
 def get_current_school(page: Page) -> str:
-    """Aktuellen Schulnamen aus ``#badge-school`` lesen (gestrippt)."""
+    """Aktuellen Schulnamen aus ``#badge-school`` lesen (gestrippt).
+
+    Das Badge ist nach DOMContentLoaded zunächst leer und wird erst per JS
+    befüllt. Ohne aktives Warten würden wir hier oft einen leeren String
+    sehen — und damit die Idempotenz-Prüfung in :func:`switch_school` aushebeln,
+    weil der Drawer die aktuell aktive Schule nicht enthält.
+    """
     loc = page.locator("#badge-school")
-    loc.wait_for(state="visible", timeout=15_000)
+    try:
+        loc.wait_for(state="visible", timeout=15_000)
+        page.wait_for_function(
+            "() => { const el = document.querySelector('#badge-school');"
+            " return !!(el && el.textContent && el.textContent.trim().length > 0); }",
+            timeout=15_000,
+        )
+    except PlaywrightTimeoutError:
+        # Fall-through: leerer Wert wird dem Aufrufer zurückgegeben.
+        pass
     return (loc.text_content() or "").strip()
 
 
