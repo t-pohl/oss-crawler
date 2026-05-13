@@ -1,0 +1,22 @@
+[project]
+name = "oss-crawler"
+version = "0.1.0"
+description = "Login + session persistence for Online-Schule Saarland (Moodle/Shibboleth SSO)."
+requires-python = ">=3.11"
+dependencies = [
+    "playwright>=1.47",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.4",
+    "python-dotenv>=1.0",
+    "rich>=13.7",
+]
+
+[project.scripts]
+oss-crawler = "oss_crawler.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["oss_crawler*"]

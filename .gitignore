@@ -1,0 +1,7 @@
+.venv/
+.env
+.auth.json
+.debug/
+__pycache__/
+*.egg-info/
+*.pyc
