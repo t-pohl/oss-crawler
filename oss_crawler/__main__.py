@@ -1,8 +1,8 @@
 """CLI entry point for oss-crawler.
 
-Aktuelle Iteration: Login + Session-Persistenz + Schulauswahl.
+Aktuelle Iteration: Login + Session-Persistenz + Schul- und Kursauswahl.
 
-# TODO(next): import discovery + downloader here once those modules exist.
+# TODO(next): import downloader here once that module exists.
 """
 from __future__ import annotations
 
@@ -13,6 +13,14 @@ from rich.console import Console
 
 from .auth import AuthError, authenticated_context
 from .config import load_settings
+from .course import (
+    CourseError,
+    find_course,
+    get_kurse_link,
+    goto_course,
+    goto_courses_dashboard,
+    list_courses,
+)
 from .school import (
     SCHOOL_ALIASES,
     SchoolError,
@@ -30,7 +38,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         prog="oss-crawler",
         description=(
             "Crawler für Online-Schule Saarland (Moodle/Shibboleth-SSO). "
-            "Aktuelle Iteration: Login, Session-Persistenz und Schulauswahl."
+            "Aktuelle Iteration: Login, Session-Persistenz, Schul- und Kursauswahl."
         ),
     )
     p.add_argument(
@@ -64,6 +72,22 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Verfügbare Schulen des Accounts ausgeben (Namen aus dem "
             "Schulwechsel-Menü) und beenden."
+        ),
+    )
+    p.add_argument(
+        "--course",
+        metavar="FULL_NAME",
+        help=(
+            "Kurs anhand seines vollen Namens (case-insensitive) auswählen. "
+            "Navigiert zur Kurs-Seite und beendet."
+        ),
+    )
+    p.add_argument(
+        "--list-courses",
+        action="store_true",
+        help=(
+            "Alle Kurse der aktiven Schule ausgeben (ein Name pro Zeile) "
+            "und beenden."
         ),
     )
     return p.parse_args(argv)
@@ -116,6 +140,31 @@ def main(argv: list[str] | None = None) -> int:
                 finally:
                     page.close()
 
+            if args.list_courses or args.course:
+                page = ctx.new_page()
+                try:
+                    page.goto(
+                        f"{settings.oss_base_url}/",
+                        wait_until="domcontentloaded",
+                        timeout=30_000,
+                    )
+                    kurse_link = get_kurse_link(page)
+                    goto_courses_dashboard(page, kurse_link)
+                    courses = list_courses(page)
+
+                    if args.list_courses:
+                        for c in courses:
+                            print(c.name)
+                        return 0
+
+                    target_course = find_course(courses, args.course)
+                    goto_course(page, target_course)
+                    console.print(
+                        f"[green]Kurs: {target_course.name} — {target_course.url}[/green]"
+                    )
+                finally:
+                    page.close()
+
             console.print(
                 f"[green]Auth OK. Session: {settings.auth_state_path}[/green]"
             )
@@ -126,6 +175,9 @@ def main(argv: list[str] | None = None) -> int:
     except SchoolError as e:
         console.print(f"[red]Schulauswahl fehlgeschlagen: {e}[/red]")
         return 3
+    except CourseError as e:
+        console.print(f"[red]Kursauswahl fehlgeschlagen: {e}[/red]")
+        return 4
     except KeyboardInterrupt:
         console.print("[yellow]Abgebrochen.[/yellow]")
         return 130

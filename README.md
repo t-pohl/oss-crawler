@@ -4,8 +4,8 @@ Crawler for [Online-Schule Saarland](https://online-schule.saarland/) — a
 learning platform protected by SAML2 SSO via Shibboleth IdP at
 `idp.online-schule.saarland` (SP at `meine.online-schule.saarland`).
 
-**This iteration handles login + session persistence + school selection.**
-Course discovery and material downloads will follow in later iterations.
+**This iteration handles login + session persistence + school selection +
+course selection.** Material downloads will follow in later iterations.
 
 ## Setup
 
@@ -68,6 +68,33 @@ happens. Unknown school → exit code 3 with a list of accessible schools.
 Aliases are defined in `oss_crawler/school.py:SCHOOL_ALIASES`. Add more by
 editing that dict.
 
+## Course selection
+
+Each school has its own Moodle instance (e.g.
+`lms-gym-albert-schweitzer.online-schule.saarland`). After the active school
+is set, `--list-courses` reads its Moodle Dashboard and prints every course
+that account has access to. `--course` selects one by full name
+(case-insensitive) and navigates the browser there.
+
+```bash
+# List courses on the currently-active school (one name per line):
+oss-crawler --list-courses
+
+# Switch school + list, in one shot:
+oss-crawler --school asg --list-courses
+
+# Select a specific course (case-insensitive exact match):
+oss-crawler --school asg --course "8 Informatik 2025-26 GRS"
+#   → prints "Kurs: 8 Informatik 2025-26 GRS — https://lms-…/course/view.php?id=1618"
+
+# Misspelt name → exit 4 with the list of available courses:
+oss-crawler --school asg --course "Quatsch"
+```
+
+The course list is read from the Moodle Dashboard's "Alle"-filter view, so
+past/future/favourite courses are included; only user-hidden courses are
+excluded.
+
 ## How login works
 
 `oss_crawler/auth.py` tries three tiers in order:
@@ -109,10 +136,10 @@ Auth failures dump screenshot + HTML into `.debug/`:
 
 Intentionally NOT here yet:
 
-- Course / class discovery (dashboard / Kurse-Modul scraping)
-- Material download
+- Material download (resources, folders, assignments, …)
 - Persistent state tracker for incremental sync
-- CLI flags for selecting a specific course within a school
+- Pagination support for accounts with more than 12 courses per school
 
-Add them on top of the `authenticated_context()` context manager from
-`oss_crawler.auth` and the `switch_school()` helper from `oss_crawler.school`.
+Build on top of `oss_crawler.auth.authenticated_context()`,
+`oss_crawler.school.switch_school()`, and
+`oss_crawler.course.goto_course()`.

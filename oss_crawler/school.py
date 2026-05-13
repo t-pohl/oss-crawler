@@ -13,6 +13,8 @@ Diese Modul kapselt:
 """
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 from rich.console import Console
 
@@ -107,6 +109,15 @@ def switch_school(page: Page, target_name: str) -> None:
         return
 
     console.log(f"[school] Wechsle von '{current}' zu '{target}'…")
+
+    # OSS-Root vor dem Klick merken — nach dem switchSchool-Redirect kann der
+    # SP uns zu einer schulspezifischen LMS-Subdomain weiterleiten (Deep-Link
+    # zum letzten Standort), wo das #badge-school nicht existiert. Wir
+    # navigieren danach explizit zurück.
+    parsed_before = urlparse(page.url)
+    oss_root = f"{parsed_before.scheme}://{parsed_before.netloc}/"
+    oss_host = parsed_before.hostname
+
     _open_school_drawer(page)
 
     schools_seen: list[str] = []
@@ -132,6 +143,13 @@ def switch_school(page: Page, target_name: str) -> None:
             f"Navigation nach Klick auf '{target}' hat nicht stattgefunden "
             "(Timeout)."
         ) from e
+
+    if urlparse(page.url).hostname != oss_host:
+        console.log(
+            f"[school] Nach Schulwechsel auf {page.url} gelandet — "
+            f"navigiere zurück zu {oss_root}."
+        )
+        page.goto(oss_root, wait_until="domcontentloaded", timeout=30_000)
 
     new_current = get_current_school(page)
     if new_current != target:
