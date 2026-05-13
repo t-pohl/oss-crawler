@@ -4,8 +4,8 @@ Crawler for [Online-Schule Saarland](https://online-schule.saarland/) — a
 learning platform protected by SAML2 SSO via Shibboleth IdP at
 `idp.online-schule.saarland` (SP at `meine.online-schule.saarland`).
 
-**This iteration handles login + session persistence only.** Course discovery
-and material downloads will follow in later iterations.
+**This iteration handles login + session persistence + school selection.**
+Course discovery and material downloads will follow in later iterations.
 
 ## Setup
 
@@ -40,6 +40,33 @@ oss-crawler --login --auth-only
 `--login` forces the interactive browser even when a saved session exists.
 `--auth-only` is the default behaviour this iteration (login, verify, exit),
 so running `oss-crawler` with no flags has the same effect.
+
+## School selection
+
+OSS accounts can be associated with multiple schools (teachers especially:
+Studienseminar + one or more Gymnasien). The dashboard shows the active
+school as a badge; the sidebar offers a "Schulwechsel" drawer to change it.
+
+```bash
+# List the schools your account can access (one per line):
+oss-crawler --list-schools
+
+# Switch to a school by short alias (built-in aliases below):
+oss-crawler --school asg     # Albert-Schweitzer-Gymnasium Dillingen
+oss-crawler --school sgs     # Gymnasium am Stadtgarten Saarlouis
+
+# Or pass the full name exactly as shown in --list-schools:
+oss-crawler --school "Albert-Schweitzer-Gymnasium Dillingen"
+
+# Combine with --login (force interactive login first):
+oss-crawler --login --school asg
+```
+
+The switch is idempotent: if the requested school is already active, nothing
+happens. Unknown school → exit code 3 with a list of accessible schools.
+
+Aliases are defined in `oss_crawler/school.py:SCHOOL_ALIASES`. Add more by
+editing that dict.
 
 ## How login works
 
@@ -82,10 +109,10 @@ Auth failures dump screenshot + HTML into `.debug/`:
 
 Intentionally NOT here yet:
 
-- Course / class discovery (Moodle dashboard scraping)
-- Material download (Moodle resource / folder modules)
+- Course / class discovery (dashboard / Kurse-Modul scraping)
+- Material download
 - Persistent state tracker for incremental sync
-- CLI flags for selecting a specific class
+- CLI flags for selecting a specific course within a school
 
-Add them on top of the `authenticated_context()` context manager exposed by
-`oss_crawler.auth`.
+Add them on top of the `authenticated_context()` context manager from
+`oss_crawler.auth` and the `switch_school()` helper from `oss_crawler.school`.
