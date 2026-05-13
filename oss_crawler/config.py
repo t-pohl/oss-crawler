@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     oss_username: str = ""
     oss_password: str = ""
-    oss_base_url: str = "https://psc.online-schule.saarland"
+    oss_base_url: str = "https://meine.online-schule.saarland"
     oss_idp_host: str = "idp.online-schule.saarland"
     headless: bool = True
 

@@ -36,7 +36,9 @@ console = Console()
 
 
 LOGIN_SELECTORS = {
-    "login_url_path": "/saml2/login",
+    # SP-initiierter SSO startet an der Root-URL: ein nicht eingeloggter
+    # Aufruf von ``{OSS_BASE_URL}/`` redirected automatisch zum IdP.
+    "login_url_path": "/",
     # Shibboleth-IdP-Felder (j_username/j_password sind kanonisch),
     # generische Fallbacks für Theme-Varianten.
     "username": (
@@ -93,15 +95,41 @@ def _is_login_path(path: str) -> bool:
     return any(frag.lower() in p for frag in LOGIN_PATH_FRAGMENTS)
 
 
+def _has_shibboleth_session(context: BrowserContext, settings: Settings) -> bool:
+    """Prüft, ob der Shibboleth-SP eine Session-Cookie gesetzt hat.
+
+    Nach erfolgreichem SAML-Login setzt der SP eine Cookie deren Name mit
+    ``_shibsession_`` beginnt. Fehlt diese, war der Login nicht erfolgreich —
+    selbst wenn die Seite auf dem SP-Host landet (z.B. eine 404-Seite).
+    """
+    oss_host = urlparse(settings.oss_base_url).hostname or ""
+    try:
+        for c in context.cookies():
+            name = c.get("name", "")
+            domain = (c.get("domain", "") or "").lstrip(".")
+            if name.startswith("_shibsession_") and (
+                domain == oss_host or oss_host.endswith(domain)
+            ):
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def _verify_session(context: BrowserContext, settings: Settings) -> bool:
-    """Lädt eine geschützte Moodle-Seite und prüft, ob wir eingeloggt sind."""
+    """Lädt die SP-Landing-Page und prüft, ob wir eingeloggt sind.
+
+    Positiv-Kriterien (alle müssen erfüllt sein):
+    - Navigation landet auf dem SP-Host (kein Redirect zurück zum IdP).
+    - Keine Shibboleth-Login-Felder im DOM.
+    - Eine ``_shibsession_*``-Cookie ist gesetzt.
+    """
     oss_host = urlparse(settings.oss_base_url).hostname
     page = context.new_page()
     try:
-        # 1. Versuch: Moodle-Dashboard.
         try:
             page.goto(
-                f"{settings.oss_base_url}/my/",
+                f"{settings.oss_base_url}/",
                 wait_until="domcontentloaded",
                 timeout=30_000,
             )
@@ -110,20 +138,8 @@ def _verify_session(context: BrowserContext, settings: Settings) -> bool:
 
         parsed = urlparse(page.url)
         if parsed.hostname != oss_host or _is_login_path(parsed.path or ""):
-            # Auf Root probieren, falls /my/ in dieser Moodle-Installation nicht existiert.
-            try:
-                page.goto(
-                    f"{settings.oss_base_url}/",
-                    wait_until="domcontentloaded",
-                    timeout=30_000,
-                )
-            except PlaywrightTimeoutError:
-                return False
-            parsed = urlparse(page.url)
-            if parsed.hostname != oss_host or _is_login_path(parsed.path or ""):
-                return False
+            return False
 
-        # Negativ-Check: kein Shibboleth-Login-Formular mehr sichtbar.
         try:
             if page.locator(
                 'input[name="j_password"], input[name="j_username"]'
@@ -131,7 +147,8 @@ def _verify_session(context: BrowserContext, settings: Settings) -> bool:
                 return False
         except Exception:
             pass
-        return True
+
+        return _has_shibboleth_session(context, settings)
     finally:
         page.close()
 
@@ -288,15 +305,15 @@ def _interactive_login(pw: Playwright, settings: Settings) -> BrowserContext:
         "[yellow]>>> Interaktiver Login: ein Chromium-Fenster öffnet sich gleich.[/yellow]\n"
         "[yellow]>>> Logge dich ganz normal ein (Username + Passwort, ggf. 2FA).[/yellow]\n"
         "[yellow]>>> Die Session wird automatisch erkannt und gespeichert,[/yellow]\n"
-        "[yellow]>>> sobald das Moodle-Dashboard sichtbar ist.[/yellow]"
+        "[yellow]>>> sobald du nach dem Login wieder zurück auf der OSS-Startseite bist.[/yellow]"
     )
     browser = pw.chromium.launch(headless=False)
     context = browser.new_context()
     page = context.new_page()
-    target_url = f"{settings.oss_base_url}/my/"
+    target_url = f"{settings.oss_base_url}/"
     page.goto(target_url, wait_until="domcontentloaded", timeout=60_000)
 
-    oss_host = urlparse(settings.oss_base_url).hostname or "psc.online-schule.saarland"
+    oss_host = urlparse(settings.oss_base_url).hostname or "meine.online-schule.saarland"
 
     deadline = time.time() + 600  # 10 Minuten Gesamttimeout
     last_logged_url: str | None = None
@@ -424,6 +441,11 @@ def _interactive_login(pw: Playwright, settings: Settings) -> BrowserContext:
                     continue
             except Exception:
                 pass
+            # Positiv-Kriterium: der Shibboleth-SP muss eine Session-Cookie
+            # gesetzt haben. Ohne diese sind wir nur auf einer (z.B. 404-)Seite
+            # des SP gelandet, ohne authentifiziert zu sein.
+            if not _has_shibboleth_session(context, settings):
+                continue
             try:
                 p.wait_for_load_state("networkidle", timeout=8_000)
             except PlaywrightTimeoutError:

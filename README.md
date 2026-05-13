@@ -1,8 +1,8 @@
 # oss-crawler
 
-Crawler for [Online-Schule Saarland](https://www.online-schule.saarland/) — a
-Moodle-based learning platform protected by SAML2 SSO via Shibboleth IdP at
-`idp.online-schule.saarland` (SP at `psc.online-schule.saarland`).
+Crawler for [Online-Schule Saarland](https://online-schule.saarland/) — a
+learning platform protected by SAML2 SSO via Shibboleth IdP at
+`idp.online-schule.saarland` (SP at `meine.online-schule.saarland`).
 
 **This iteration handles login + session persistence only.** Course discovery
 and material downloads will follow in later iterations.
@@ -46,15 +46,16 @@ so running `oss-crawler` with no flags has the same effect.
 `oss_crawler/auth.py` tries three tiers in order:
 
 1. **Session reuse** — load `.auth.json` (Playwright `storage_state`), open
-   `${OSS_BASE_URL}/my/`, and check we land on the SP host without a
-   Shibboleth login form.
-2. **Auto-login** — open the SP login URL, follow the redirect to the IdP,
+   `${OSS_BASE_URL}/`, and verify: SP host (no redirect to IdP), no
+   Shibboleth login form, and a `_shibsession_*` cookie is set.
+2. **Auto-login** — open `${OSS_BASE_URL}/`, follow the redirect to the IdP,
    fill `j_username` / `j_password`, click submit, wait for the SAMLResponse
    POST to put us back on the SP host. Falls through to tier 3 on any
    failure (wrong creds, IdP theme changes, CAPTCHA/MFA prompts).
 3. **Interactive login** — open a visible Chromium window, let the user log
-   in manually (2FA supported), poll until any tab shows the SP host on a
-   non-login path with no Shibboleth password input, then save the session.
+   in manually (2FA supported), poll until a tab is on the SP host, on a
+   non-login path, with no Shibboleth password input visible, and a
+   `_shibsession_*` cookie exists. Then save the session.
 
 ## Debugging
 
@@ -73,7 +74,7 @@ Auth failures dump screenshot + HTML into `.debug/`:
 |---|---|---|
 | `OSS_USERNAME` | _empty_ | IdP username (optional; enables auto-login) |
 | `OSS_PASSWORD` | _empty_ | IdP password (optional; enables auto-login) |
-| `OSS_BASE_URL` | `https://psc.online-schule.saarland` | Moodle SP base URL |
+| `OSS_BASE_URL` | `https://meine.online-schule.saarland` | OSS SP base URL |
 | `OSS_IDP_HOST` | `idp.online-schule.saarland` | Shibboleth IdP hostname (used to detect SSO redirects) |
 | `HEADLESS` | `true` | Run Chromium headless during auto-login (ignored for `--login`, which is always visible) |
 
