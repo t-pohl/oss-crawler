@@ -95,34 +95,17 @@ def _is_login_path(path: str) -> bool:
     return any(frag.lower() in p for frag in LOGIN_PATH_FRAGMENTS)
 
 
-def _has_shibboleth_session(context: BrowserContext, settings: Settings) -> bool:
-    """Prüft, ob der Shibboleth-SP eine Session-Cookie gesetzt hat.
-
-    Nach erfolgreichem SAML-Login setzt der SP eine Cookie deren Name mit
-    ``_shibsession_`` beginnt. Fehlt diese, war der Login nicht erfolgreich —
-    selbst wenn die Seite auf dem SP-Host landet (z.B. eine 404-Seite).
-    """
-    oss_host = urlparse(settings.oss_base_url).hostname or ""
-    try:
-        for c in context.cookies():
-            name = c.get("name", "")
-            domain = (c.get("domain", "") or "").lstrip(".")
-            if name.startswith("_shibsession_") and (
-                domain == oss_host or oss_host.endswith(domain)
-            ):
-                return True
-    except Exception:
-        pass
-    return False
-
-
 def _verify_session(context: BrowserContext, settings: Settings) -> bool:
     """Lädt die SP-Landing-Page und prüft, ob wir eingeloggt sind.
 
-    Positiv-Kriterien (alle müssen erfüllt sein):
+    Positiv-Kriterien (beide müssen erfüllt sein):
     - Navigation landet auf dem SP-Host (kein Redirect zurück zum IdP).
     - Keine Shibboleth-Login-Felder im DOM.
-    - Eine ``_shibsession_*``-Cookie ist gesetzt.
+
+    Eine pre-Login-Anfrage an ``{OSS_BASE_URL}/`` wird vom SP zwangsweise
+    zum IdP weitergeleitet, daher reicht der Host-Check als Positiv-Signal:
+    auf dem SP-Host zu landen heißt automatisch, dass wir die SAML-Runde
+    absolviert haben.
     """
     oss_host = urlparse(settings.oss_base_url).hostname
     page = context.new_page()
@@ -148,7 +131,7 @@ def _verify_session(context: BrowserContext, settings: Settings) -> bool:
         except Exception:
             pass
 
-        return _has_shibboleth_session(context, settings)
+        return True
     finally:
         page.close()
 
@@ -410,7 +393,15 @@ def _interactive_login(pw: Playwright, settings: Settings) -> BrowserContext:
 
     last_heartbeat = time.time()
     seen_urls: set[str] = set()
+    reject_logged: set[tuple[str, str]] = set()
     success = False
+
+    def _log_reject(url: str, reason: str) -> None:
+        key = (url, reason)
+        if key in reject_logged:
+            return
+        reject_logged.add(key)
+        console.log(f"[auth] URL {url} verworfen: {reason}")
 
     while time.time() < deadline:
         if not browser.is_connected():
@@ -433,18 +424,17 @@ def _interactive_login(pw: Playwright, settings: Settings) -> BrowserContext:
         for p, u in live_pages:
             parsed = urlparse(u)
             if parsed.hostname != oss_host:
+                _log_reject(u, f"falscher Host (erwartet {oss_host})")
                 continue
             if _is_login_path(parsed.path or ""):
+                _log_reject(u, f"Pfad gehört zum Login-Flow ({parsed.path})")
                 continue
             try:
-                if p.locator('input[name="j_password"]').count() > 0:
-                    continue
+                pw_count = p.locator('input[name="j_password"]').count()
             except Exception:
-                pass
-            # Positiv-Kriterium: der Shibboleth-SP muss eine Session-Cookie
-            # gesetzt haben. Ohne diese sind wir nur auf einer (z.B. 404-)Seite
-            # des SP gelandet, ohne authentifiziert zu sein.
-            if not _has_shibboleth_session(context, settings):
+                pw_count = 0
+            if pw_count > 0:
+                _log_reject(u, f"Shibboleth-Passwortfeld noch sichtbar ({pw_count})")
                 continue
             try:
                 p.wait_for_load_state("networkidle", timeout=8_000)

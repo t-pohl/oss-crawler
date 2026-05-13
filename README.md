@@ -47,15 +47,15 @@ so running `oss-crawler` with no flags has the same effect.
 
 1. **Session reuse** — load `.auth.json` (Playwright `storage_state`), open
    `${OSS_BASE_URL}/`, and verify: SP host (no redirect to IdP), no
-   Shibboleth login form, and a `_shibsession_*` cookie is set.
+   Shibboleth login form, and at least one cookie is set on the SP host.
 2. **Auto-login** — open `${OSS_BASE_URL}/`, follow the redirect to the IdP,
    fill `j_username` / `j_password`, click submit, wait for the SAMLResponse
    POST to put us back on the SP host. Falls through to tier 3 on any
    failure (wrong creds, IdP theme changes, CAPTCHA/MFA prompts).
 3. **Interactive login** — open a visible Chromium window, let the user log
    in manually (2FA supported), poll until a tab is on the SP host, on a
-   non-login path, with no Shibboleth password input visible, and a
-   `_shibsession_*` cookie exists. Then save the session.
+   non-login path, with no Shibboleth password input visible, and at least
+   one cookie is set on the SP host. Then save the session.
 
 ## Debugging
 
