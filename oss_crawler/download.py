@@ -362,6 +362,25 @@ def _download_url_shortcut(
         page.close()
 
 
+def _prune_empty_dirs_up_to(path: Path, stop_at: Path) -> None:
+    """Entfernt ``path``, falls leer; läuft danach im Baum nach oben weiter,
+    bis ein nicht-leeres Verzeichnis erreicht wird oder ``stop_at`` ansteht.
+
+    ``stop_at`` selbst wird NICHT entfernt (das ist die ``--target``-Wurzel).
+    """
+    try:
+        path = path.resolve()
+        stop_at = stop_at.resolve()
+    except OSError:
+        return
+    while path != stop_at:
+        try:
+            path.rmdir()
+        except OSError:
+            return
+        path = path.parent
+
+
 def download_module(
     context: BrowserContext,
     page: Page,
@@ -375,6 +394,11 @@ def download_module(
 
     ``page`` muss auf der section.php-Seite des Moduls sein. Zielordner:
     ``root/<school>/<course>/<module>/`` (alle Komponenten sanitisiert).
+
+    Wenn das Modul keine herunterladbaren Materialien enthält (nur Labels,
+    leere Folder-Aktivitäten, alle fehlgeschlagen …), wird der angelegte
+    Modul-Ordner am Ende wieder entfernt — bis hinauf zur ``--target``-Wurzel,
+    falls auch der Kurs-Ordner damit leer wird.
     """
     root = root_dir or Path.cwd()
     target_dir = (
@@ -414,5 +438,8 @@ def download_module(
         except MaterialError as e:
             stats.failed += 1
             console.log(f"[download][red]  ! {m.name}: {e}[/red]")
+
+    # Aufräumen: leere Modul-(und ggf. Kurs-)Ordner wieder entfernen.
+    _prune_empty_dirs_up_to(target_dir, root)
 
     return stats
