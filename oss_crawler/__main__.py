@@ -21,6 +21,7 @@ from .course import (
     goto_courses_dashboard,
     list_courses,
 )
+from .download import download_module
 from .module import (
     ModuleError,
     find_module,
@@ -30,6 +31,7 @@ from .module import (
 from .school import (
     SCHOOL_ALIASES,
     SchoolError,
+    get_current_school,
     list_schools,
     resolve_school,
     switch_school,
@@ -111,6 +113,17 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Alle Module des aktiven Kurses ausgeben (ein Name pro Zeile) "
             "und beenden. Erfordert --course."
+        ),
+    )
+    p.add_argument(
+        "--url-format",
+        choices=("linux", "windows"),
+        default="linux",
+        help=(
+            "Format für URL-Shortcuts beim Download. "
+            "'linux' (Default): .html-Dateien mit Meta-Refresh (öffnen per "
+            "Doppelklick zuverlässig im Standardbrowser). "
+            "'windows': klassische [InternetShortcut] .url-Dateien."
         ),
     )
     return p.parse_args(argv)
@@ -204,6 +217,35 @@ def main(argv: list[str] | None = None) -> int:
                         console.print(
                             f"[green]Modul: {target_module.name} — "
                             f"{target_module.url}[/green]"
+                        )
+
+                        # Schulname für den Zielordner bestimmen.
+                        if args.school:
+                            school_name = resolve_school(args.school)
+                        else:
+                            oss_page = ctx.new_page()
+                            try:
+                                oss_page.goto(
+                                    f"{settings.oss_base_url}/",
+                                    wait_until="domcontentloaded",
+                                    timeout=30_000,
+                                )
+                                school_name = get_current_school(oss_page)
+                            finally:
+                                oss_page.close()
+
+                        stats = download_module(
+                            context=ctx,
+                            page=page,
+                            school_name=school_name,
+                            course_name=target_course.name,
+                            module_name=target_module.name,
+                            url_format=args.url_format,
+                        )
+                        console.print(
+                            f"[green]Download fertig: {stats.new} neu, "
+                            f"{stats.skipped} übersprungen, "
+                            f"{stats.failed} fehlgeschlagen.[/green]"
                         )
                 finally:
                     page.close()

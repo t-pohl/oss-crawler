@@ -1,0 +1,325 @@
+"""Material-Discovery und Download für eine Modul- (Section-)Seite.
+
+Liest die Aktivitätsliste (``ul[data-for="cmlist"]``), übersetzt jede
+Aktivität in ein :class:`Material` (cmid, name, modtype, view_url,
+extension hint), und lädt Dateien runter bzw. legt Shortcut-Dateien an.
+
+Inkrementeller Sync: Skip-Check basiert auf Dateinamen-Existenz im
+Zielordner. Kein State-File.
+"""
+from __future__ import annotations
+
+import html as html_lib
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
+from urllib.parse import urlparse
+
+UrlFormat = Literal["linux", "windows"]
+
+from playwright.sync_api import (
+    BrowserContext,
+    Error as PlaywrightError,
+    Page,
+    TimeoutError as PlaywrightTimeoutError,
+)
+from rich.console import Console
+
+from .sanitize import sanitize_dir_name, sanitize_file_name
+
+console = Console()
+
+
+@dataclass(frozen=True)
+class Material:
+    cmid: str
+    name: str
+    modtype: str
+    view_url: str
+    ext_hint: str = ""
+
+
+class MaterialError(RuntimeError):
+    pass
+
+
+@dataclass
+class DownloadStats:
+    new: int = 0
+    skipped: int = 0
+    failed: int = 0
+
+
+_MATERIALS_JS = r"""
+() => {
+    const list = document.querySelector('ul[data-for="cmlist"], ul.section');
+    if (!list) return [];
+    const out = [];
+    for (const li of list.querySelectorAll('li.activity[id^="module-"]')) {
+        const cmid = (li.id || '').replace(/^module-/, '');
+        if (!cmid) continue;
+        let modtype = '';
+        for (const cls of li.classList) {
+            if (cls.startsWith('modtype_')) { modtype = cls.slice(8); break; }
+        }
+        if (!modtype) continue;
+
+        const link = li.querySelector('a.aalink, a.stretched-link');
+        const view_url = link ? (link.getAttribute('href') || '').trim() : '';
+
+        let name = '';
+        const ins = li.querySelector('.instancename');
+        if (ins) {
+            const clone = ins.cloneNode(true);
+            clone.querySelectorAll('.accesshide').forEach(n => n.remove());
+            name = (clone.textContent || '').trim();
+        }
+        if (!name) {
+            const h5 = li.querySelector('.activity-altcontent h5');
+            if (h5) name = (h5.textContent || '').trim();
+        }
+        if (!name) continue;
+
+        let ext_hint = '';
+        const badge = li.querySelector('.activitybadge');
+        if (badge) ext_hint = (badge.textContent || '').trim().toLowerCase();
+        if (!ext_hint) {
+            const icon = li.querySelector('img.activityicon');
+            if (icon) {
+                const src = icon.getAttribute('src') || '';
+                const m = src.match(/\/([^/]+)\.svg(?:[?#]|$)/);
+                if (m && m[1] !== 'unknown' && m[1] !== 'monologo') {
+                    ext_hint = m[1].toLowerCase();
+                }
+            }
+        }
+
+        out.push({ cmid, name, modtype, view_url, ext_hint });
+    }
+    return out;
+}
+"""
+
+
+def list_materials(page: Page) -> list[Material]:
+    raw = page.evaluate(_MATERIALS_JS)
+    materials = [Material(**r) for r in raw]
+    console.log(f"[download] {len(materials)} Materialien gefunden.")
+    return materials
+
+
+def _resource_filename(m: Material) -> str:
+    base = sanitize_file_name(m.name)
+    ext = m.ext_hint.strip().lower()
+    if not ext:
+        return base
+    if not ext.startswith("."):
+        ext = "." + ext
+    return base + ext
+
+
+def _url_filename(m: Material, url_format: UrlFormat) -> str:
+    ext = ".html" if url_format == "linux" else ".url"
+    return sanitize_file_name(m.name) + ext
+
+
+def _write_url_shortcut(
+    target: Path, external_url: str, display_name: str, url_format: UrlFormat
+) -> None:
+    if url_format == "windows":
+        # Windows ([InternetShortcut]) — auf Linux per `cat` lesbar, aber
+        # kein File-Manager öffnet das per Doppelklick im Browser.
+        target.write_text(
+            f"[InternetShortcut]\nURL={external_url}\n",
+            encoding="utf-8",
+        )
+        return
+    # Linux/cross-platform: minimales HTML mit Meta-Refresh. Doppelklick im
+    # File-Manager öffnet die Datei in der Standard-Browser-Anwendung, die
+    # dann den Refresh-Header auswertet und zur externen URL springt.
+    # (Wir verwenden bewusst NICHT .desktop Type=Link — GNOME/Nautilus
+    # behandelt das wegen Trust-/Exec-Bit-Heuristiken unzuverlässig.)
+    safe_url = html_lib.escape(external_url, quote=True)
+    safe_name = html_lib.escape(display_name)
+    target.write_text(
+        "<!DOCTYPE html>\n"
+        "<html lang=\"de\"><head>\n"
+        "<meta charset=\"utf-8\">\n"
+        f"<meta http-equiv=\"refresh\" content=\"0; url={safe_url}\">\n"
+        f"<title>{safe_name}</title>\n"
+        "</head><body>\n"
+        f"<p>Weiterleitung zu <a href=\"{safe_url}\">{safe_name}</a>…</p>\n"
+        "</body></html>\n",
+        encoding="utf-8",
+    )
+
+
+_CD_FILENAME = re.compile(
+    r"filename\*=(?:UTF-8'')?\"?([^\";]+)\"?|filename=\"?([^\";]+)\"?",
+    re.IGNORECASE,
+)
+
+
+def _filename_from_content_disposition(cd: str | None) -> str:
+    if not cd:
+        return ""
+    m = _CD_FILENAME.search(cd)
+    if not m:
+        return ""
+    return (m.group(1) or m.group(2) or "").strip()
+
+
+def _ext_from_filename(fname: str) -> str:
+    if not fname or "." not in fname:
+        return ""
+    return "." + fname.rsplit(".", 1)[1].lower()
+
+
+def _download_resource(
+    context: BrowserContext, m: Material, target_dir: Path
+) -> tuple[Path, bool]:
+    """Lädt ein Resource-Material runter. Liefert (Pfad, was_downloaded).
+
+    Wir umgehen den Browser und ziehen die Datei direkt per
+    ``context.request.get`` — gleiche Cookies, aber Chromium öffnet keine
+    PDFs/Bilder/etc. in einem neuen Tab. Das umgeht Moodle-Konfigurationen
+    bei denen ``forcedownload=1`` nicht greift (z.B. Display-Mode "embed").
+    """
+    expected = target_dir / _resource_filename(m)
+    if expected.exists():
+        return expected, False
+
+    sep = "&" if "?" in m.view_url else "?"
+    dl_url = f"{m.view_url}{sep}forcedownload=1"
+
+    try:
+        response = context.request.get(dl_url, timeout=90_000)
+    except (PlaywrightError, PlaywrightTimeoutError) as e:
+        raise MaterialError(
+            f"HTTP-Fehler beim Download von '{m.name}' (cmid {m.cmid}): {e}"
+        ) from e
+
+    if not response.ok:
+        raise MaterialError(
+            f"HTTP {response.status} für '{m.name}' (cmid {m.cmid})."
+        )
+
+    target = expected
+    if "." not in _resource_filename(m):
+        # Unbekannte Extension — aus Content-Disposition ableiten.
+        cd = response.headers.get("content-disposition", "")
+        ext = _ext_from_filename(_filename_from_content_disposition(cd))
+        if ext:
+            target = target_dir / (sanitize_file_name(m.name) + ext)
+            if target.exists():
+                return target, False
+
+    target.write_bytes(response.body())
+    return target, True
+
+
+_URL_EXTRACT_JS = r"""
+() => {
+    const here = window.location.hostname;
+    const links = document.querySelectorAll(
+        '#region-main a[href], .urlworkaround a[href], .resourcecontent a[href]'
+    );
+    for (const a of links) {
+        const href = a.getAttribute('href') || '';
+        if (/^https?:\/\//i.test(href) && !href.includes(here)) {
+            return href;
+        }
+    }
+    return '';
+}
+"""
+
+
+def _download_url_shortcut(
+    context: BrowserContext,
+    m: Material,
+    target_dir: Path,
+    url_format: UrlFormat,
+) -> tuple[Path, bool]:
+    """Schreibt eine Shortcut-Datei (.desktop oder .url je nach Format)."""
+    target = target_dir / _url_filename(m, url_format)
+    if target.exists():
+        return target, False
+
+    page = context.new_page()
+    try:
+        try:
+            page.goto(m.view_url, wait_until="domcontentloaded", timeout=45_000)
+        except PlaywrightTimeoutError as e:
+            raise MaterialError(
+                f"URL-View-Seite für '{m.name}' (cmid {m.cmid}) nicht erreichbar."
+            ) from e
+
+        lms_host = urlparse(m.view_url).hostname
+        cur_host = urlparse(page.url).hostname
+        external = ""
+        if cur_host and cur_host != lms_host:
+            external = page.url
+        else:
+            external = page.evaluate(_URL_EXTRACT_JS) or ""
+
+        if not external:
+            raise MaterialError(
+                f"Externe URL für '{m.name}' (cmid {m.cmid}) nicht ermittelbar."
+            )
+
+        _write_url_shortcut(target, external, m.name, url_format)
+        return target, True
+    finally:
+        page.close()
+
+
+def download_module(
+    context: BrowserContext,
+    page: Page,
+    school_name: str,
+    course_name: str,
+    module_name: str,
+    root_dir: Path | None = None,
+    url_format: UrlFormat = "linux",
+) -> DownloadStats:
+    """Lädt alle (neuen) Materialien des aktuell geöffneten Moduls runter.
+
+    ``page`` muss auf der section.php-Seite des Moduls sein. Zielordner:
+    ``root/<school>/<course>/<module>/`` (alle Komponenten sanitisiert).
+    """
+    root = root_dir or Path.cwd()
+    target_dir = (
+        root
+        / sanitize_dir_name(school_name)
+        / sanitize_dir_name(course_name)
+        / sanitize_dir_name(module_name)
+    )
+    target_dir.mkdir(parents=True, exist_ok=True)
+    console.log(f"[download] Zielordner: {target_dir}")
+
+    materials = list_materials(page)
+    stats = DownloadStats()
+
+    for m in materials:
+        try:
+            if m.modtype == "resource":
+                path, downloaded = _download_resource(context, m, target_dir)
+            elif m.modtype == "url":
+                path, downloaded = _download_url_shortcut(
+                    context, m, target_dir, url_format
+                )
+            else:
+                continue
+            if downloaded:
+                stats.new += 1
+                console.log(f"[download]  + {path.name}")
+            else:
+                stats.skipped += 1
+                console.log(f"[download]  = {path.name} (skip)")
+        except MaterialError as e:
+            stats.failed += 1
+            console.log(f"[download][red]  ! {m.name}: {e}[/red]")
+
+    return stats
