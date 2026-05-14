@@ -275,7 +275,6 @@ def _download_folder(
     Dateinamen-Existenz, wie bei Resources.
     """
     folder_subdir = target_dir / sanitize_dir_name(m.name)
-    folder_subdir.mkdir(parents=True, exist_ok=True)
 
     page = context.new_page()
     try:
@@ -291,8 +290,12 @@ def _download_folder(
 
     stats = DownloadStats()
     if not files:
-        console.log(f"[download]  ~ {m.name}/ (leerer Ordner)")
+        console.log(f"[download]  ~ {m.name}/ (leerer Ordner, übersprungen)")
         return stats
+
+    # Subdir erst anlegen, sobald wir wissen, dass es Inhalt gibt — verhindert
+    # leere Folder-Ordner für OSS-Folder ohne Dateien.
+    folder_subdir.mkdir(parents=True, exist_ok=True)
 
     for f in files:
         filename = sanitize_file_name(f["name"])
