@@ -104,6 +104,10 @@ Once a course is open, `--list-modules` prints every module on its page;
 `--target DIR`; folder and file names sanitized — see below). Both flags
 require `--course` in the same invocation.
 
+If `--course` is given **without** `--module`, every module of the course
+is downloaded (one folder per module). `--list-modules` still requires
+`--course` and only lists.
+
 ```bash
 # List modules of a specific course (no download):
 oss-crawler --school asg --course "8 Informatik 2025-26 GRS" --list-modules
@@ -114,6 +118,11 @@ oss-crawler --school asg --course "8 Informatik 2025-26 GRS" \
     --module "Modellieren und Implementieren"
 #   → "+ <file>" per new download, "= <file> (skip)" per existing,
 #     ending with "Download fertig: N neu, M übersprungen, K fehlgeschlagen."
+
+# Omit --module to download EVERY module of the course in one shot:
+oss-crawler --school asg --course "8 Informatik 2025-26 GRS"
+#   → iterates each module, prints a section header per module,
+#     ends with an aggregate "Gesamt über N Module: …" line.
 
 # Override the download root (default ./downloads):
 oss-crawler --school asg --course "8 Informatik 2025-26 GRS" \

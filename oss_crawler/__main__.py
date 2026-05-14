@@ -22,7 +22,7 @@ from .course import (
     goto_courses_dashboard,
     list_courses,
 )
-from .download import download_module
+from .download import DownloadStats, download_module
 from .module import (
     ModuleError,
     find_module,
@@ -217,47 +217,76 @@ def main(argv: list[str] | None = None) -> int:
                         f"[green]Kurs: {target_course.name} — {target_course.url}[/green]"
                     )
 
-                    if args.list_modules or args.module:
-                        modules = list_modules(page)
-                        if args.list_modules:
-                            for m in modules:
-                                print(m.name)
-                            return 0
-                        target_module = find_module(modules, args.module)
-                        goto_module(page, target_module)
+                    modules = list_modules(page)
+
+                    if args.list_modules:
+                        for m in modules:
+                            print(m.name)
+                        return 0
+
+                    # Welche Module sollen runtergeladen werden?
+                    # --module X → nur X; sonst → alle.
+                    if args.module:
+                        modules_to_download = [find_module(modules, args.module)]
+                    else:
+                        modules_to_download = modules
+
+                    if not modules_to_download:
                         console.print(
-                            f"[green]Modul: {target_module.name} — "
-                            f"{target_module.url}[/green]"
+                            "[yellow]Keine Module zum Herunterladen vorhanden.[/yellow]"
                         )
+                        return 0
 
-                        # Schulname für den Zielordner bestimmen.
-                        if args.school:
-                            school_name = resolve_school(args.school)
-                        else:
-                            oss_page = ctx.new_page()
-                            try:
-                                oss_page.goto(
-                                    f"{settings.oss_base_url}/",
-                                    wait_until="domcontentloaded",
-                                    timeout=30_000,
-                                )
-                                school_name = get_current_school(oss_page)
-                            finally:
-                                oss_page.close()
+                    # Schulname für den Zielordner einmal bestimmen.
+                    if args.school:
+                        school_name = resolve_school(args.school)
+                    else:
+                        oss_page = ctx.new_page()
+                        try:
+                            oss_page.goto(
+                                f"{settings.oss_base_url}/",
+                                wait_until="domcontentloaded",
+                                timeout=30_000,
+                            )
+                            school_name = get_current_school(oss_page)
+                        finally:
+                            oss_page.close()
 
+                    total = DownloadStats()
+                    for m in modules_to_download:
+                        console.print(f"[bold cyan]→ Modul: {m.name}[/bold cyan]")
+                        try:
+                            goto_module(page, m)
+                        except ModuleError as e:
+                            console.print(
+                                f"[red]  ! Konnte Modul nicht öffnen: {e}[/red]"
+                            )
+                            total.failed += 1
+                            continue
                         stats = download_module(
                             context=ctx,
                             page=page,
                             school_name=school_name,
                             course_name=target_course.name,
-                            module_name=target_module.name,
+                            module_name=m.name,
                             root_dir=args.target,
                             url_format=args.url_format,
                         )
+                        total.new += stats.new
+                        total.skipped += stats.skipped
+                        total.failed += stats.failed
+
+                    if len(modules_to_download) > 1:
                         console.print(
-                            f"[green]Download fertig: {stats.new} neu, "
-                            f"{stats.skipped} übersprungen, "
-                            f"{stats.failed} fehlgeschlagen.[/green]"
+                            f"[green]Gesamt über {len(modules_to_download)} Module: "
+                            f"{total.new} neu, {total.skipped} übersprungen, "
+                            f"{total.failed} fehlgeschlagen.[/green]"
+                        )
+                    else:
+                        console.print(
+                            f"[green]Download fertig: {total.new} neu, "
+                            f"{total.skipped} übersprungen, "
+                            f"{total.failed} fehlgeschlagen.[/green]"
                         )
                 finally:
                     page.close()
