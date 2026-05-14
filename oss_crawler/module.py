@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from playwright.sync_api import Page
+from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 from rich.console import Console
 
 console = Console()
@@ -33,20 +33,38 @@ class ModuleError(RuntimeError):
 
 _MODULES_JS = r"""
 () => {
-    // Wir nehmen jedes Element mit id="section-N" (egal ob <div> oder <li>)
-    // und extrahieren Namen + section.php-URL. Format-agnostisch: funktioniert
-    // sowohl für Grid-Karten (section-1+) als auch für die List-Item-Variante
-    // (section-0 "Allgemein").
+    // Wir kombinieren ZWEI Quellen, damit alle Moodle-Course-Formate
+    // abgedeckt sind:
+    //   (A) Die Courseindex-Sidebar: ihr <a.courseindex-link>-Element pro
+    //       Section ist die zuverlässige Quelle für Section-URLs, auch wenn
+    //       die Section-Cards selbst als Modal-Trigger (data-toggle="modal")
+    //       statt als <a> gerendert werden.
+    //   (B) Die [id="section-N"]-Elemente im Hauptbereich — fallback, falls
+    //       die Sidebar in einem Theme fehlt.
+    // Dedupliziert wird über die URL.
     const out = [];
-    const seen = new Set();
-    const elements = document.querySelectorAll('[id^="section-"]');
-    for (const el of elements) {
-        const id = el.id || '';
-        if (!/^section-\d+$/.test(id)) continue;  // "section-0-content" o.ä. überspringen
-        if (seen.has(id)) continue;
-        seen.add(id);
+    const seenUrls = new Set();
 
-        // Name: title-Attribut > data-sectionname > .sectionname-Text > erster <h3>
+    // (A) Sidebar-Anchors.
+    for (const a of document.querySelectorAll(
+        'a.courseindex-link[href*="/course/section.php?id="]'
+    )) {
+        const url = (a.getAttribute('href') || '').trim();
+        if (!url || seenUrls.has(url)) continue;
+        const name = (a.textContent || '').trim();
+        if (!name) continue;
+        const parent = a.closest('[data-number]');
+        const number = parent ? parent.getAttribute('data-number') : '';
+        const id = number ? `section-${number}` : `idx-${url}`;
+        seenUrls.add(url);
+        out.push({ id, name, url, is_current: false });
+    }
+
+    // (B) [id^="section-N"]-Elemente.
+    for (const el of document.querySelectorAll('[id^="section-"]')) {
+        const id = el.id || '';
+        if (!/^section-\d+$/.test(id)) continue;
+
         let name = (el.getAttribute('title') || '').trim();
         if (!name) name = (el.getAttribute('data-sectionname') || '').trim();
         if (!name) {
@@ -59,22 +77,62 @@ _MODULES_JS = r"""
         }
         if (!name) continue;
 
-        // URL: erster Anker mit /course/section.php?id=…
         const link = el.querySelector('a[href*="/course/section.php?id="]');
         if (!link) continue;
         const url = (link.getAttribute('href') || '').trim();
-        if (!url) continue;
+        if (!url || seenUrls.has(url)) continue;
+        seenUrls.add(url);
 
         const isCurrent = el.classList.contains('currentgridsection');
         out.push({ id, name, url, is_current: isCurrent });
     }
+
     return out;
 }
 """
 
 
+_MODULES_DIAGNOSTIC_JS = r"""
+() => {
+    const c = document.querySelector('.grid-section');
+    return {
+        url: window.location.href,
+        title: document.title,
+        courseindexAnchors: document.querySelectorAll(
+            'a.courseindex-link[href*="/course/section.php?id="]'
+        ).length,
+        anySectionPhpLinks: document.querySelectorAll(
+            'a[href*="/course/section.php?id="]'
+        ).length,
+        sectionEls: document.querySelectorAll('[id^="section-"]').length,
+        gridCards: document.querySelectorAll('.grid-section').length,
+        courseindexNav: !!document.querySelector('#courseindex, #course-index'),
+        sampleGridCard: c ? c.outerHTML.slice(0, 600) : '',
+    };
+}
+"""
+
+
+def _wait_for_courseindex(page: Page) -> None:
+    """Wartet darauf, dass die Courseindex-Sidebar ihre Section-Anchors
+    befüllt — manche Moodle-Themes laden diese erst nach DOMContentLoaded
+    via AMD nach. Timeout-fall-through ist OK; danach steht zumindest die
+    [id^="section-"]-Fallback-Quelle bereit.
+    """
+    try:
+        page.wait_for_function(
+            "() => document.querySelectorAll("
+            "'a.courseindex-link[href*=\"/course/section.php?id=\"]'"
+            ").length > 0",
+            timeout=10_000,
+        )
+    except PlaywrightTimeoutError:
+        pass
+
+
 def list_modules(page: Page) -> list[Module]:
     """Liest alle Sections der aktuell offenen Kurs-Seite (format-agnostisch)."""
+    _wait_for_courseindex(page)
     raw = page.evaluate(_MODULES_JS)
     modules = [
         Module(
@@ -86,6 +144,9 @@ def list_modules(page: Page) -> list[Module]:
         for item in raw
     ]
     console.log(f"[module] {len(modules)} Modul(e) auf der Kurs-Seite gefunden.")
+    if len(modules) <= 1:
+        diag = page.evaluate(_MODULES_DIAGNOSTIC_JS)
+        console.log(f"[module] Diagnose: {diag}")
     return modules
 
 
