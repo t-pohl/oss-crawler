@@ -2,6 +2,7 @@
 .env
 .auth.json
 .debug/
+downloads/
 __pycache__/
 *.egg-info/
 *.pyc

@@ -100,8 +100,9 @@ excluded.
 
 Once a course is open, `--list-modules` prints every module on its page;
 `--module` selects one and **downloads all its materials** into
-`./<school>/<course>/<module>/` (folder and file names sanitized — see
-below). Both flags require `--course` in the same invocation.
+`./downloads/<school>/<course>/<module>/` by default (override via
+`--target DIR`; folder and file names sanitized — see below). Both flags
+require `--course` in the same invocation.
 
 ```bash
 # List modules of a specific course (no download):
@@ -113,6 +114,11 @@ oss-crawler --school asg --course "8 Informatik 2025-26 GRS" \
     --module "Modellieren und Implementieren"
 #   → "+ <file>" per new download, "= <file> (skip)" per existing,
 #     ending with "Download fertig: N neu, M übersprungen, K fehlgeschlagen."
+
+# Override the download root (default ./downloads):
+oss-crawler --school asg --course "8 Informatik 2025-26 GRS" \
+    --module "Modellieren und Implementieren" \
+    --target ~/oss-materials
 
 # Misspelt module → exit 5 with the list of available modules:
 oss-crawler --school asg --course "8 Informatik 2025-26 GRS" --module "Quatsch"

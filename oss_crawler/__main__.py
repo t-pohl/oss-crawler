@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from rich.console import Console
 
@@ -126,6 +127,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "'windows': klassische [InternetShortcut] .url-Dateien."
         ),
     )
+    p.add_argument(
+        "--target",
+        type=Path,
+        default=Path("downloads"),
+        metavar="DIR",
+        help=(
+            "Wurzelordner für Downloads. Default: ./downloads. "
+            "Materialien landen unter <target>/<school>/<course>/<module>/."
+        ),
+    )
     return p.parse_args(argv)
 
 
@@ -240,6 +251,7 @@ def main(argv: list[str] | None = None) -> int:
                             school_name=school_name,
                             course_name=target_course.name,
                             module_name=target_module.name,
+                            root_dir=args.target,
                             url_format=args.url_format,
                         )
                         console.print(
