@@ -203,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
                         timeout=30_000,
                     )
                     kurse_link = get_kurse_link(page)
-                    goto_courses_dashboard(page, kurse_link)
+                    goto_courses_dashboard(page, kurse_link, settings)
                     courses = list_courses(page)
 
                     if args.list_courses:

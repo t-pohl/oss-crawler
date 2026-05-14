@@ -8,10 +8,14 @@ gegen den vollen Namen (case-insensitive), und navigiert hin.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlparse
 
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 from rich.console import Console
+
+from .auth import AuthError, submit_idp_login_form
+from .config import Settings
 
 console = Console()
 
@@ -43,20 +47,133 @@ def get_kurse_link(page: Page) -> str:
     return href
 
 
-def goto_courses_dashboard(page: Page, kurse_link: str) -> None:
+def _dump_idp_debug(page: Page, suffix: str) -> None:
+    """Speichert Screenshot + HTML der aktuellen Seite zur Diagnose."""
+    debug_dir = Path(".debug")
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    shot = debug_dir / f"{suffix}.png"
+    html = debug_dir / f"{suffix}.html"
+    try:
+        page.screenshot(path=str(shot), full_page=True)
+        html.write_text(page.content(), encoding="utf-8")
+        console.log(f"[course] Debug-Dump: {shot} / {html}")
+    except Exception as e:
+        console.log(f"[course] Debug-Dump fehlgeschlagen: {e}")
+
+
+def _walk_through_idp_consent(
+    page: Page, settings: Settings, max_steps: int = 6
+) -> None:
+    """Klick-Walk durch Shibboleth-Zwischenseiten beim Wechsel zu einem
+    neuen SP (z.B. erste LMS-Subdomain einer Schule).
+
+    Handhabt drei Arten von Zwischenseiten:
+    1. **Re-Auth (Passwort-Feld)**: füllt das IdP-Form aus den OSS-Credentials
+       und sendet ab. Manche IdPs verlangen Re-Auth pro SP, auch wenn schon
+       eine IdP-Session existiert.
+    2. **Consent / Attribute-Release**: klickt den Accept-Button (bevorzugt
+       ``_eventId_proceed``; sonst plausible Accept-Submits) — NIEMALS einen
+       Reject/Cancel-Button.
+    3. **Sonstiges**: bricht ab, dumpt Screenshot + HTML nach ``.debug/``.
+
+    Max. ``max_steps`` Iterationen gegen Endlosschleifen.
+    """
+    for step in range(max_steps):
+        parsed = urlparse(page.url)
+        path = parsed.path or ""
+        if "/idp/" not in path:
+            return
+
+        # (1) Re-Auth-Fall: Passwort-Feld da → ausfüllen + absenden.
+        try:
+            has_password_field = (
+                page.locator('input[type="password"]').count() > 0
+            )
+        except Exception:
+            has_password_field = False
+        if has_password_field:
+            console.log(
+                f"[course] IdP-Zwischenseite (Step {step + 1}): "
+                "Re-Auth-Form, fülle Credentials aus."
+            )
+            try:
+                submit_idp_login_form(page, settings)
+            except AuthError as e:
+                _dump_idp_debug(page, f"idp-relogin-step{step + 1}")
+                raise CourseError(
+                    f"Re-Auth auf der IdP fehlgeschlagen: {e}"
+                ) from e
+            continue
+
+        clicked = False
+        # NUR positive Accept-Submits — keine blinden Fallbacks.
+        for selector in (
+            'input[name="_eventId_proceed"]',
+            'button[name="_eventId_proceed"]',
+            'input[type="submit"][name="_eventId_proceed"]',
+            'input[type="submit"][value*="kzeptieren" i]',
+            'input[type="submit"][value*="ortfahren" i]',
+            'input[type="submit"][value*="ccept" i]',
+            'input[type="submit"][value*="eiter" i]',  # Weiter
+            'button:has-text("Akzeptieren")',
+            'button:has-text("Fortfahren")',
+            'button:has-text("Weiter")',
+            'button:has-text("Accept")',
+            'button:has-text("Continue")',
+        ):
+            try:
+                btn = page.locator(selector).first
+                if btn.count() > 0:
+                    btn.click(timeout=5_000)
+                    clicked = True
+                    console.log(
+                        f"[course] IdP-Zwischenseite (Step {step + 1}): "
+                        f"'{selector}' geklickt."
+                    )
+                    break
+            except Exception:
+                continue
+
+        if not clicked:
+            console.log(
+                f"[course] IdP-Zwischenseite ohne erkannten Accept-Button: "
+                f"{page.url}"
+            )
+            _dump_idp_debug(page, f"idp-unhandled-step{step + 1}")
+            return
+
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=30_000)
+        except PlaywrightTimeoutError:
+            pass
+
+    # Loop erschöpft, aber wir sind immer noch auf der IdP.
+    console.log(
+        f"[course] Consent-Walk erschöpft nach {max_steps} Schritten — "
+        f"immer noch auf {page.url}"
+    )
+    _dump_idp_debug(page, "idp-loop-exhausted")
+
+
+def goto_courses_dashboard(page: Page, kurse_link: str, settings: Settings) -> None:
     """Navigiert zum Moodle-Dashboard (``/my/``) der aktiven Schule.
 
     Ablauf:
     1. ``kurse_link`` (typisch ``/auth/shibboleth/``) öffnen — sorgt für die
-       SAML-Runde an die LMS-Subdomain (transparent, IdP-Cookies vorhanden).
-    2. Wohin Moodle danach redirected ist konfigurationsabhängig (Default
-       ``/my/``, kann aber auch ``/`` sein oder per Deep-Link auf den zuletzt
-       besuchten Kurs zeigen). Wir navigieren daher danach EXPLIZIT zu
-       ``{lms_base}/my/`` — idempotent, falls Moodle ohnehin schon dort ist.
-    3. Auf den ``courses-view``-Container warten als Stabilitätsanker.
+       SAML-Runde an die LMS-Subdomain.
+    2. Auf eventuelle IdP-Zwischenseiten reagieren (Re-Auth / Consent), bis
+       wir den IdP verlassen haben.
+    3. Wohin Moodle danach redirected ist konfigurationsabhängig (Default
+       ``/my/``, kann auch ``/`` sein oder Deep-Link). Wir navigieren danach
+       EXPLIZIT zu ``{lms_base}/my/`` — idempotent.
+    4. Auf den ``courses-view``-Container warten als Stabilitätsanker.
     """
     page.goto(kurse_link, wait_until="domcontentloaded", timeout=60_000)
     console.log(f"[course] nach SAML-Auth auf: {page.url}")
+
+    _walk_through_idp_consent(page, settings)
+    if "/idp/" in (urlparse(page.url).path or ""):
+        console.log(f"[course] nach Consent-Walk noch auf IdP: {page.url}")
 
     parsed = urlparse(kurse_link)
     if not parsed.scheme or not parsed.netloc:

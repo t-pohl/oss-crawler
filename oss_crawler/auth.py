@@ -201,6 +201,50 @@ def _dump_debug(page, suffix: str) -> Path:
     return shot
 
 
+def submit_idp_login_form(page, settings: Settings) -> None:
+    """Füllt das Shibboleth-IdP-Login-Form auf der **aktuellen** Seite aus
+    und schickt es ab. Wartet danach auf den nächsten DOM-Load — wartet
+    aber NICHT, bis wir den IdP-Host verlassen haben (das überlässt sie der
+    aufrufenden Stelle, z.B. einem Consent-Walk im Anschluss).
+
+    Voraussetzung: ``page`` ist bereits auf einer IdP-Seite mit sichtbarem
+    Username/Password-Feld. Nützlich, wenn die IdP mitten in einem SAML-Flow
+    Re-Auth verlangt (z.B. beim ersten Zugriff auf eine neue LMS-Subdomain).
+    """
+    if not settings.has_credentials():
+        raise AuthError(
+            "IdP verlangt Re-Login, aber OSS_USERNAME/OSS_PASSWORD sind "
+            "nicht in .env gesetzt. Setze sie oder nutze 'oss-crawler --login'."
+        )
+
+    _dismiss_cookie_banner(page)
+
+    try:
+        username_loc = page.locator(LOGIN_SELECTORS["username"]).first
+        username_loc.wait_for(state="visible", timeout=15_000)
+        username_loc.fill(settings.oss_username)
+
+        password_loc = page.locator(LOGIN_SELECTORS["password"]).first
+        password_loc.wait_for(state="visible", timeout=15_000)
+        password_loc.fill(settings.oss_password)
+    except PlaywrightTimeoutError as e:
+        shot = _dump_debug(page, "idp-reauth-fields-missing")
+        raise AuthError(
+            f"IdP-Login-Felder nicht gefunden: {e}\nScreenshot: {shot}"
+        ) from e
+
+    if not _click_submit(page):
+        shot = _dump_debug(page, "idp-reauth-submit-missing")
+        raise AuthError(
+            f"IdP-Submit-Button nicht klickbar.\nScreenshot: {shot}"
+        )
+
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=30_000)
+    except PlaywrightTimeoutError:
+        pass
+
+
 def _login_with_credentials(context: BrowserContext, settings: Settings) -> None:
     page = context.new_page()
     login_url = f"{settings.oss_base_url}{LOGIN_SELECTORS['login_url_path']}"
