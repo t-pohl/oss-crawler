@@ -154,6 +154,10 @@ What gets downloaded:
   external URL. Double-click in any file manager opens it in your default
   browser, which then jumps to the destination. Use `--url-format windows`
   to emit classic Windows `.url` (`[InternetShortcut]`) files instead.
+- **Folder activities**: a subfolder is created under the module folder
+  with the activity's name, and each file inside the folder is downloaded
+  there. Skip-check is per-file, so adding files on OSS only re-downloads
+  the missing ones on subsequent runs.
 - **Labels**: skipped (they're inline section headers, not materials).
 
 Incremental sync: a material is downloaded only if a file with its

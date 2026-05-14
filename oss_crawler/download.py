@@ -236,6 +236,90 @@ _URL_EXTRACT_JS = r"""
 """
 
 
+_FOLDER_FILES_JS = r"""
+() => {
+    // Folder-Aktivitäten listen Dateien als <a href="https://…/pluginfile.php/…/mod_folder/…">
+    // Wir scopen auf den Hauptinhalt, damit eventuelle Header-/Icon-Links
+    // außen vor bleiben.
+    const root = document.querySelector('#region-main') || document.body;
+    const out = [];
+    const seen = new Set();
+    for (const a of root.querySelectorAll(
+        'a[href*="/pluginfile.php/"][href*="/mod_folder/"]'
+    )) {
+        const url = (a.getAttribute('href') || '').trim();
+        if (!url || seen.has(url)) continue;
+        seen.add(url);
+        let name = '';
+        try {
+            const u = new URL(url, window.location.href);
+            const parts = u.pathname.split('/');
+            name = decodeURIComponent(parts[parts.length - 1] || '');
+        } catch (e) {}
+        if (!name) name = (a.textContent || '').trim();
+        if (!name) continue;
+        out.push({ name, url });
+    }
+    return out;
+}
+"""
+
+
+def _download_folder(
+    context: BrowserContext, m: Material, target_dir: Path
+) -> DownloadStats:
+    """Lädt alle Dateien eines Moodle-Folder-Materials runter.
+
+    Erzeugt einen Unterordner ``<m.name>`` im Modul-Zielordner und legt
+    die einzelnen Dateien darin ab. Per-Datei-Skip-Check anhand der
+    Dateinamen-Existenz, wie bei Resources.
+    """
+    folder_subdir = target_dir / sanitize_dir_name(m.name)
+    folder_subdir.mkdir(parents=True, exist_ok=True)
+
+    page = context.new_page()
+    try:
+        try:
+            page.goto(m.view_url, wait_until="domcontentloaded", timeout=45_000)
+        except PlaywrightTimeoutError as e:
+            raise MaterialError(
+                f"Folder-Seite für '{m.name}' (cmid {m.cmid}) nicht erreichbar."
+            ) from e
+        files = page.evaluate(_FOLDER_FILES_JS)
+    finally:
+        page.close()
+
+    stats = DownloadStats()
+    if not files:
+        console.log(f"[download]  ~ {m.name}/ (leerer Ordner)")
+        return stats
+
+    for f in files:
+        filename = sanitize_file_name(f["name"])
+        if not filename:
+            continue
+        target = folder_subdir / filename
+        rel = f"{folder_subdir.name}/{filename}"
+        if target.exists():
+            stats.skipped += 1
+            console.log(f"[download]  = {rel} (skip)")
+            continue
+        try:
+            resp = context.request.get(f["url"], timeout=90_000)
+        except (PlaywrightError, PlaywrightTimeoutError) as e:
+            stats.failed += 1
+            console.log(f"[download][red]  ! {rel}: {e}[/red]")
+            continue
+        if not resp.ok:
+            stats.failed += 1
+            console.log(f"[download][red]  ! {rel}: HTTP {resp.status}[/red]")
+            continue
+        target.write_bytes(resp.body())
+        stats.new += 1
+        console.log(f"[download]  + {rel}")
+    return stats
+
+
 def _download_url_shortcut(
     context: BrowserContext,
     m: Material,
@@ -310,6 +394,12 @@ def download_module(
                 path, downloaded = _download_url_shortcut(
                     context, m, target_dir, url_format
                 )
+            elif m.modtype == "folder":
+                folder_stats = _download_folder(context, m, target_dir)
+                stats.new += folder_stats.new
+                stats.skipped += folder_stats.skipped
+                stats.failed += folder_stats.failed
+                continue
             else:
                 continue
             if downloaded:
