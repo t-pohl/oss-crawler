@@ -194,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:
                 finally:
                     page.close()
 
-            if args.list_courses or args.course:
+            if args.list_courses or args.course or args.school:
                 page = ctx.new_page()
                 try:
                     page.goto(
@@ -211,29 +211,16 @@ def main(argv: list[str] | None = None) -> int:
                             print(c.name)
                         return 0
 
-                    target_course = find_course(courses, args.course)
-                    goto_course(page, target_course)
-                    console.print(
-                        f"[green]Kurs: {target_course.name} — {target_course.url}[/green]"
-                    )
-
-                    modules = list_modules(page)
-
-                    if args.list_modules:
-                        for m in modules:
-                            print(m.name)
-                        return 0
-
-                    # Welche Module sollen runtergeladen werden?
-                    # --module X → nur X; sonst → alle.
-                    if args.module:
-                        modules_to_download = [find_module(modules, args.module)]
+                    # Welche Kurse sollen verarbeitet werden?
+                    # --course X → nur X; sonst (--school ohne --course) → alle.
+                    if args.course:
+                        courses_to_process = [find_course(courses, args.course)]
                     else:
-                        modules_to_download = modules
+                        courses_to_process = courses
 
-                    if not modules_to_download:
+                    if not courses_to_process:
                         console.print(
-                            "[yellow]Keine Module zum Herunterladen vorhanden.[/yellow]"
+                            "[yellow]Keine Kurse zum Herunterladen vorhanden.[/yellow]"
                         )
                         return 0
 
@@ -253,33 +240,70 @@ def main(argv: list[str] | None = None) -> int:
                             oss_page.close()
 
                     total = DownloadStats()
-                    for m in modules_to_download:
-                        console.print(f"[bold cyan]→ Modul: {m.name}[/bold cyan]")
-                        try:
-                            goto_module(page, m)
-                        except ModuleError as e:
+                    total_modules = 0
+                    for course in courses_to_process:
+                        if len(courses_to_process) > 1:
                             console.print(
-                                f"[red]  ! Konnte Modul nicht öffnen: {e}[/red]"
+                                f"[bold magenta]== Kurs: {course.name} =="
+                                "[/bold magenta]"
+                            )
+                        try:
+                            goto_course(page, course)
+                        except CourseError as e:
+                            console.print(
+                                f"[red]  ! Konnte Kurs nicht öffnen: {e}[/red]"
                             )
                             total.failed += 1
                             continue
-                        stats = download_module(
-                            context=ctx,
-                            page=page,
-                            school_name=school_name,
-                            course_name=target_course.name,
-                            module_name=m.name,
-                            root_dir=args.target,
-                            url_format=args.url_format,
-                        )
-                        total.new += stats.new
-                        total.skipped += stats.skipped
-                        total.failed += stats.failed
+                        if len(courses_to_process) == 1:
+                            console.print(
+                                f"[green]Kurs: {course.name} — {course.url}[/green]"
+                            )
 
-                    if len(modules_to_download) > 1:
+                        modules = list_modules(page)
+                        if args.list_modules:
+                            for m in modules:
+                                print(m.name)
+                            return 0
+
+                        if args.module:
+                            modules_to_download = [find_module(modules, args.module)]
+                        else:
+                            modules_to_download = modules
+
+                        total_modules += len(modules_to_download)
+                        for m in modules_to_download:
+                            console.print(
+                                f"[bold cyan]→ Modul: {m.name}[/bold cyan]"
+                            )
+                            try:
+                                goto_module(page, m)
+                            except ModuleError as e:
+                                console.print(
+                                    f"[red]  ! Konnte Modul nicht öffnen: {e}"
+                                    "[/red]"
+                                )
+                                total.failed += 1
+                                continue
+                            stats = download_module(
+                                context=ctx,
+                                page=page,
+                                school_name=school_name,
+                                course_name=course.name,
+                                module_name=m.name,
+                                root_dir=args.target,
+                                url_format=args.url_format,
+                            )
+                            total.new += stats.new
+                            total.skipped += stats.skipped
+                            total.failed += stats.failed
+
+                    n_courses = len(courses_to_process)
+                    if n_courses > 1 or total_modules > 1:
                         console.print(
-                            f"[green]Gesamt über {len(modules_to_download)} Module: "
-                            f"{total.new} neu, {total.skipped} übersprungen, "
+                            f"[green]Gesamt über {n_courses} Kurs(e), "
+                            f"{total_modules} Modul(e): {total.new} neu, "
+                            f"{total.skipped} übersprungen, "
                             f"{total.failed} fehlgeschlagen.[/green]"
                         )
                     else:

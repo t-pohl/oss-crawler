@@ -108,6 +108,10 @@ If `--course` is given **without** `--module`, every module of the course
 is downloaded (one folder per module). `--list-modules` still requires
 `--course` and only lists.
 
+If `--school` is given **without** `--course`, every course of that school
+is downloaded — i.e. the full school tree end-to-end. `--list-courses`
+still requires nothing more than the active school and only lists.
+
 ```bash
 # List modules of a specific course (no download):
 oss-crawler --school asg --course "8 Informatik 2025-26 GRS" --list-modules
@@ -122,7 +126,13 @@ oss-crawler --school asg --course "8 Informatik 2025-26 GRS" \
 # Omit --module to download EVERY module of the course in one shot:
 oss-crawler --school asg --course "8 Informatik 2025-26 GRS"
 #   → iterates each module, prints a section header per module,
-#     ends with an aggregate "Gesamt über N Module: …" line.
+#     ends with an aggregate "Gesamt über N Kurs(e), M Modul(e): …" line.
+
+# Omit --course as well to download EVERY course of the school
+# (each course's modules, each module's materials):
+oss-crawler --school asg
+#   → iterates each course, prints "== Kurs: <name> ==" per course,
+#     then per module, then the aggregate line at the very end.
 
 # Override the download root (default ./downloads):
 oss-crawler --school asg --course "8 Informatik 2025-26 GRS" \
