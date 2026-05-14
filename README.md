@@ -5,7 +5,8 @@ learning platform protected by SAML2 SSO via Shibboleth IdP at
 `idp.online-schule.saarland` (SP at `meine.online-schule.saarland`).
 
 **This iteration handles login + session persistence + school selection +
-course selection.** Material downloads will follow in later iterations.
+course selection + module (section) selection.** Material downloads will
+follow in later iterations.
 
 ## Setup
 
@@ -95,6 +96,35 @@ The course list is read from the Moodle Dashboard's "Alle"-filter view, so
 past/future/favourite courses are included; only user-hidden courses are
 excluded.
 
+## Module (section) selection
+
+Once a course is open, `--list-modules` prints every module on its page;
+`--module` navigates to the named one. Both require `--course` in the same
+invocation (no carryover state across runs).
+
+```bash
+# List modules of a specific course:
+oss-crawler --school asg --course "8 Informatik 2025-26 GRS" --list-modules
+#   → one module name per line, in dashboard order, including "Allgemein"
+
+# Select a module by full name (case-insensitive):
+oss-crawler --school asg --course "8 Informatik 2025-26 GRS" \
+    --module "Modellieren und Implementieren"
+#   → "Modul: Modellieren und Implementieren — https://lms-…/course/section.php?id=…"
+
+# Misspelt module → exit 5 with the list of available modules:
+oss-crawler --school asg --course "8 Informatik 2025-26 GRS" --module "Quatsch"
+
+# Forgetting --course → clear refusal, exit 5:
+oss-crawler --school asg --list-modules
+#   → "--module / --list-modules erfordert --course in derselben Invocation."
+```
+
+In Moodle parlance these are "sections" (topics/chapters). The CLI uses
+"module" to match the user's mental model. Extraction is format-agnostic
+across Grid / Topics / Weekly formats — anything matching `id^="section-"`
+with a `/course/section.php?id=…` link is picked up.
+
 ## How login works
 
 `oss_crawler/auth.py` tries three tiers in order:
@@ -139,7 +169,8 @@ Intentionally NOT here yet:
 - Material download (resources, folders, assignments, …)
 - Persistent state tracker for incremental sync
 - Pagination support for accounts with more than 12 courses per school
+- `--include-restricted` to surface sections lacking a direct link
 
 Build on top of `oss_crawler.auth.authenticated_context()`,
-`oss_crawler.school.switch_school()`, and
-`oss_crawler.course.goto_course()`.
+`oss_crawler.school.switch_school()`, `oss_crawler.course.goto_course()`,
+and `oss_crawler.module.goto_module()`.

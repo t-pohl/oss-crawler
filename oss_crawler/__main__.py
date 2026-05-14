@@ -1,6 +1,6 @@
 """CLI entry point for oss-crawler.
 
-Aktuelle Iteration: Login + Session-Persistenz + Schul- und Kursauswahl.
+Aktuelle Iteration: Login + Session-Persistenz + Schul-, Kurs- und Modulauswahl.
 
 # TODO(next): import downloader here once that module exists.
 """
@@ -21,6 +21,12 @@ from .course import (
     goto_courses_dashboard,
     list_courses,
 )
+from .module import (
+    ModuleError,
+    find_module,
+    goto_module,
+    list_modules,
+)
 from .school import (
     SCHOOL_ALIASES,
     SchoolError,
@@ -38,7 +44,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         prog="oss-crawler",
         description=(
             "Crawler für Online-Schule Saarland (Moodle/Shibboleth-SSO). "
-            "Aktuelle Iteration: Login, Session-Persistenz, Schul- und Kursauswahl."
+            "Aktuelle Iteration: Login, Session-Persistenz, Schul-, Kurs- "
+            "und Modulauswahl."
         ),
     )
     p.add_argument(
@@ -90,6 +97,22 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "und beenden."
         ),
     )
+    p.add_argument(
+        "--module",
+        metavar="FULL_NAME",
+        help=(
+            "Modul (Abschnitt) anhand seines vollen Namens (case-insensitive) "
+            "auswählen. Erfordert --course. Navigiert zur Modul-Seite und beendet."
+        ),
+    )
+    p.add_argument(
+        "--list-modules",
+        action="store_true",
+        help=(
+            "Alle Module des aktiven Kurses ausgeben (ein Name pro Zeile) "
+            "und beenden. Erfordert --course."
+        ),
+    )
     return p.parse_args(argv)
 
 
@@ -109,6 +132,13 @@ def main(argv: list[str] | None = None) -> int:
                 f"[red]Konnte {settings.auth_state_path} nicht entfernen: {e}[/red]"
             )
             return 1
+
+    if (args.list_modules or args.module) and not args.course:
+        console.print(
+            "[red]--module / --list-modules erfordert --course "
+            "in derselben Invocation.[/red]"
+        )
+        return 5
 
     try:
         with authenticated_context(settings, force_login=args.login) as ctx:
@@ -162,6 +192,19 @@ def main(argv: list[str] | None = None) -> int:
                     console.print(
                         f"[green]Kurs: {target_course.name} — {target_course.url}[/green]"
                     )
+
+                    if args.list_modules or args.module:
+                        modules = list_modules(page)
+                        if args.list_modules:
+                            for m in modules:
+                                print(m.name)
+                            return 0
+                        target_module = find_module(modules, args.module)
+                        goto_module(page, target_module)
+                        console.print(
+                            f"[green]Modul: {target_module.name} — "
+                            f"{target_module.url}[/green]"
+                        )
                 finally:
                     page.close()
 
@@ -178,6 +221,9 @@ def main(argv: list[str] | None = None) -> int:
     except CourseError as e:
         console.print(f"[red]Kursauswahl fehlgeschlagen: {e}[/red]")
         return 4
+    except ModuleError as e:
+        console.print(f"[red]Modulauswahl fehlgeschlagen: {e}[/red]")
+        return 5
     except KeyboardInterrupt:
         console.print("[yellow]Abgebrochen.[/yellow]")
         return 130
