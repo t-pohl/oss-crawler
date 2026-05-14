@@ -98,14 +98,14 @@ def _is_login_path(path: str) -> bool:
 def _verify_session(context: BrowserContext, settings: Settings) -> bool:
     """Lädt die SP-Landing-Page und prüft, ob wir eingeloggt sind.
 
-    Positiv-Kriterien (beide müssen erfüllt sein):
+    Positiv-Kriterien (alle müssen erfüllt sein):
     - Navigation landet auf dem SP-Host (kein Redirect zurück zum IdP).
     - Keine Shibboleth-Login-Felder im DOM.
-
-    Eine pre-Login-Anfrage an ``{OSS_BASE_URL}/`` wird vom SP zwangsweise
-    zum IdP weitergeleitet, daher reicht der Host-Check als Positiv-Signal:
-    auf dem SP-Host zu landen heißt automatisch, dass wir die SAML-Runde
-    absolviert haben.
+    - ``#badge-school`` taucht mit nicht-leerem Inhalt auf — das ist das
+      konkrete Eingeloggt-Signal des OSS-Dashboards. Eine bloß-auf-SP-Host-
+      Heuristik genügt nicht: bei abgelaufenen Sessions kann der SP statt
+      Redirect auch eine Hinweisseite ("Sitzung abgelaufen", Wartung …)
+      ausliefern, die unsere Checks oben fälschlich passieren würde.
     """
     oss_host = urlparse(settings.oss_base_url).hostname
     page = context.new_page()
@@ -130,6 +130,17 @@ def _verify_session(context: BrowserContext, settings: Settings) -> bool:
                 return False
         except Exception:
             pass
+
+        # Positiv-Signal: das #badge-school-Element muss vorhanden sein und
+        # einen befüllten Text-Content haben (es wird per JS gefüllt).
+        try:
+            page.wait_for_function(
+                "() => { const el = document.querySelector('#badge-school');"
+                " return !!(el && el.textContent && el.textContent.trim().length > 0); }",
+                timeout=10_000,
+            )
+        except PlaywrightTimeoutError:
+            return False
 
         return True
     finally:
