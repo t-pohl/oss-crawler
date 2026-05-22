@@ -117,6 +117,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     p.add_argument(
+        "--only-new",
+        action="store_true",
+        help=(
+            "Nur neu heruntergeladene Dateien auf der Konsole ausgeben. "
+            "Unterdrückt alle '(skip)'-Zeilen für bereits vorhandene Dateien."
+        ),
+    )
+    p.add_argument(
         "--url-format",
         choices=("linux", "windows"),
         default="linux",
@@ -293,6 +301,7 @@ def main(argv: list[str] | None = None) -> int:
                                 module_name=m.name,
                                 root_dir=args.target,
                                 url_format=args.url_format,
+                                only_new=args.only_new,
                             )
                             total.new += stats.new
                             total.skipped += stats.skipped

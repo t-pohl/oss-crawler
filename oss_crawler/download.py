@@ -266,7 +266,7 @@ _FOLDER_FILES_JS = r"""
 
 
 def _download_folder(
-    context: BrowserContext, m: Material, target_dir: Path
+    context: BrowserContext, m: Material, target_dir: Path, only_new: bool = False
 ) -> DownloadStats:
     """Lädt alle Dateien eines Moodle-Folder-Materials runter.
 
@@ -305,7 +305,8 @@ def _download_folder(
         rel = f"{folder_subdir.name}/{filename}"
         if target.exists():
             stats.skipped += 1
-            console.log(f"[download]  = {rel} (skip)")
+            if not only_new:
+                console.log(f"[download]  = {rel} (skip)")
             continue
         try:
             resp = context.request.get(f["url"], timeout=90_000)
@@ -389,6 +390,7 @@ def download_module(
     module_name: str,
     root_dir: Path | None = None,
     url_format: UrlFormat = "linux",
+    only_new: bool = False,
 ) -> DownloadStats:
     """Lädt alle (neuen) Materialien des aktuell geöffneten Moduls runter.
 
@@ -422,7 +424,9 @@ def download_module(
                     context, m, target_dir, url_format
                 )
             elif m.modtype == "folder":
-                folder_stats = _download_folder(context, m, target_dir)
+                folder_stats = _download_folder(
+                    context, m, target_dir, only_new=only_new
+                )
                 stats.new += folder_stats.new
                 stats.skipped += folder_stats.skipped
                 stats.failed += folder_stats.failed
@@ -434,7 +438,8 @@ def download_module(
                 console.log(f"[download]  + {path.name}")
             else:
                 stats.skipped += 1
-                console.log(f"[download]  = {path.name} (skip)")
+                if not only_new:
+                    console.log(f"[download]  = {path.name} (skip)")
         except MaterialError as e:
             stats.failed += 1
             console.log(f"[download][red]  ! {m.name}: {e}[/red]")
