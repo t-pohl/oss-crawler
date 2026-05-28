@@ -6,3 +6,7 @@ downloads/
 __pycache__/
 *.egg-info/
 *.pyc
+
+# PyInstaller build artifacts
+build/
+dist/
