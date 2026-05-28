@@ -1,6 +1,6 @@
 [project]
 name = "oss-crawler"
-version = "0.1.0"
+version = "0.2.0"
 description = "Login + session persistence for Online-Schule Saarland (Moodle/Shibboleth SSO)."
 requires-python = ">=3.11"
 dependencies = [
@@ -9,6 +9,12 @@ dependencies = [
     "pydantic-settings>=2.4",
     "python-dotenv>=1.0",
     "rich>=13.7",
+]
+
+[project.optional-dependencies]
+build = [
+    "pyinstaller>=6.10",
+    "pyinstaller-hooks-contrib>=2024.9",
 ]
 
 [project.scripts]

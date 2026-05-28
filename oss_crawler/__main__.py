@@ -13,7 +13,7 @@ from pathlib import Path
 from rich.console import Console
 
 from .auth import AuthError, authenticated_context
-from .config import load_settings
+from .config import app_dir, load_settings
 from .course import (
     CourseError,
     find_course,
@@ -138,14 +138,33 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument(
         "--target",
         type=Path,
-        default=Path("downloads"),
+        default=app_dir() / "downloads",
         metavar="DIR",
         help=(
-            "Wurzelordner für Downloads. Default: ./downloads. "
+            "Wurzelordner für Downloads. Default: ./downloads "
+            "(bzw. der Ordner neben der .exe, wenn als Standalone gebaut). "
             "Materialien landen unter <target>/<school>/<course>/<module>/."
         ),
     )
     return p.parse_args(argv)
+
+
+def _pause_if_frozen() -> None:
+    """Halte das Konsolenfenster offen, wenn die .exe per Doppelklick lief.
+
+    Ohne diese Pause schließt sich das Fenster sofort nach dem Ende und der
+    Nutzer sieht weder Fehler noch Erfolgsmeldung. Nur im PyInstaller-Build
+    aktiv und nur, wenn stdin ein TTY ist (also nicht, wenn die .exe aus
+    einer Pipe oder einem Skript heraus gestartet wurde).
+    """
+    if not getattr(sys, "frozen", False):
+        return
+    if not sys.stdin or not sys.stdin.isatty():
+        return
+    try:
+        input("Drücke Enter zum Beenden…")
+    except (EOFError, KeyboardInterrupt):
+        pass
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -346,4 +365,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        rc = main()
+    finally:
+        _pause_if_frozen()
+    sys.exit(rc)

@@ -30,7 +30,7 @@ from playwright.sync_api import (
 )
 from rich.console import Console
 
-from .config import Settings
+from .config import Settings, app_dir
 
 console = Console()
 
@@ -189,7 +189,7 @@ def _click_submit(page) -> bool:
 
 def _dump_debug(page, suffix: str) -> Path:
     """Schreibt Screenshot + HTML zur Diagnose. Liefert den Screenshot-Pfad."""
-    debug_dir = Path(".debug")
+    debug_dir = app_dir() / ".debug"
     debug_dir.mkdir(parents=True, exist_ok=True)
     shot = debug_dir / f"{suffix}.png"
     html = debug_dir / f"{suffix}.html"

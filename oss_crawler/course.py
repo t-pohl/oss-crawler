@@ -15,7 +15,7 @@ from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 from rich.console import Console
 
 from .auth import AuthError, submit_idp_login_form
-from .config import Settings
+from .config import Settings, app_dir
 
 console = Console()
 
@@ -49,7 +49,7 @@ def get_kurse_link(page: Page) -> str:
 
 def _dump_idp_debug(page: Page, suffix: str) -> None:
     """Speichert Screenshot + HTML der aktuellen Seite zur Diagnose."""
-    debug_dir = Path(".debug")
+    debug_dir = app_dir() / ".debug"
     debug_dir.mkdir(parents=True, exist_ok=True)
     shot = debug_dir / f"{suffix}.png"
     html = debug_dir / f"{suffix}.html"

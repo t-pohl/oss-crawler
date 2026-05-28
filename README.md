@@ -8,7 +8,27 @@ learning platform protected by SAML2 SSO via Shibboleth IdP at
 course selection + module (section) selection + per-module material
 download with incremental sync.**
 
-## Setup
+## Windows quickstart (single .exe, no setup)
+
+1. Download the latest `oss-crawler.exe` from the
+   [Releases page](../../releases/latest).
+2. Put it in any folder you like (Desktop, a USB stick, …). The tool is
+   fully portable — it will write `.auth.json` and a `downloads\` folder
+   right next to itself.
+3. Double-click `oss-crawler.exe`. A console window opens and a Chromium
+   window pops up showing the Online-Schule Saarland login. Log in once;
+   the session is saved.
+4. From then on, open `cmd.exe` in that folder and run, e.g.:
+   ```cmd
+   oss-crawler.exe --list-courses
+   oss-crawler.exe --school asg --course "Mathe 9b"
+   ```
+   See the sections below for all CLI flags.
+
+On first launch Windows SmartScreen may warn that the file is "unrecognised"
+(the binary is not code-signed). Click **More info → Run anyway**.
+
+## Setup (Linux / developers)
 
 ```bash
 cd /home/thomas/Repos/oss-crawler
