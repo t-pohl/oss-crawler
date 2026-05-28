@@ -14,7 +14,13 @@ Build prerequisites (run in this order, on Windows):
 The matching `PLAYWRIGHT_BROWSERS_PATH=0` at runtime is set by the runtime
 hook at `packaging/pyi_rth_playwright.py`.
 """
-from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs
+import os
+
+from PyInstaller.utils.hooks import (
+    collect_data_files,
+    collect_dynamic_libs,
+    collect_submodules,
+)
 
 # Pull in everything Playwright ships inside its package (driver binary,
 # .local-browsers/ if PLAYWRIGHT_BROWSERS_PATH=0 was used at install time,
@@ -31,10 +37,18 @@ a = Analysis(
     # launcher imports `oss_crawler.__main__` as a real package so the
     # relative imports resolve.
     ["packaging/run_oss_crawler.py"],
-    pathex=[],
+    # pathex: PyInstaller adds the entry script's directory to sys.path,
+    # which here would be `packaging/` — too narrow to find `oss_crawler/`
+    # at the repo root. Add the repo root explicitly so the package is
+    # discoverable during analysis without relying on a `pip install -e .`
+    # egg-link (editable installs are unreliable for PyInstaller).
+    pathex=[os.path.abspath(".")],
     binaries=playwright_binaries,
     datas=playwright_datas,
-    hiddenimports=[],
+    # collect_submodules walks the package directory and lists every
+    # importable module, so PyInstaller bundles them even if they're only
+    # ever reached through dynamic / conditional imports.
+    hiddenimports=collect_submodules("oss_crawler"),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=["packaging/pyi_rth_playwright.py"],
