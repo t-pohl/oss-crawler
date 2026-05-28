@@ -1,6 +1,6 @@
 [project]
 name = "oss-crawler"
-version = "0.2.0"
+version = "0.2.1"
 description = "Login + session persistence for Online-Schule Saarland (Moodle/Shibboleth SSO)."
 requires-python = ">=3.11"
 dependencies = [

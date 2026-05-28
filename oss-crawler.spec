@@ -25,7 +25,12 @@ playwright_binaries = collect_dynamic_libs("playwright")
 
 
 a = Analysis(
-    ["oss_crawler/__main__.py"],
+    # Use the launcher in packaging/ rather than oss_crawler/__main__.py
+    # directly: PyInstaller would run __main__.py as a top-level script,
+    # which breaks the `from .auth import ...` relative imports. The
+    # launcher imports `oss_crawler.__main__` as a real package so the
+    # relative imports resolve.
+    ["packaging/run_oss_crawler.py"],
     pathex=[],
     binaries=playwright_binaries,
     datas=playwright_datas,
