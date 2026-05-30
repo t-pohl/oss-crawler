@@ -19,6 +19,7 @@ Schritte:
 from __future__ import annotations
 
 import re
+import unicodedata
 
 
 _UMLAUT_REPLACEMENTS: list[tuple[str, str]] = [
@@ -39,7 +40,11 @@ _EXCEPTIONS = frozenset({
 
 
 def _core(name: str) -> str:
-    s = _MULTI_SPACE.sub("_", name)
+    # NFC-Normalisierung zuerst: Netzwerk-Shares (Synology/SMB) liefern Namen
+    # mal als NFD (z. B. ``ö`` = ``o`` + kombinierendes Trema). Ohne diese
+    # Zusammensetzung würden die Umlaut-Ersetzungen unten nicht greifen.
+    s = unicodedata.normalize("NFC", name)
+    s = _MULTI_SPACE.sub("_", s)
     for src, dst in _UMLAUT_REPLACEMENTS:
         s = s.replace(src, dst)
     s = _FORBIDDEN.sub("", s)
