@@ -70,7 +70,7 @@ _MULTI_UNDERSCORE = re.compile(r"_+")
 # Deutsche Funktionswörter, die in Verzeichnisnamen klein bleiben (außer am Anfang).
 _EXCEPTIONS = frozenset({
     "und", "oder", "von", "zu", "in", "mit", "auf", "fuer",
-    "der", "die", "das", "dem", "den", "des",
+    "aus", "der", "die", "das", "dem", "den", "des",
     "am", "im", "zum",
 })
 
