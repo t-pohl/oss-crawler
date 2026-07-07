@@ -169,8 +169,12 @@ def _core(name: str, *, strip_uuid: bool = True) -> str:
     #     ("Projekt(2024)" -> "Projekt_2024").
     s = _OPEN_BRACKETS.sub("_", s)
     s = _CLOSE_BRACKETS.sub("", s)
+    # 4) Awkward-Combos. Bindestrich-neben-Unterstrich ("-_", "_-") wird hier
+    #    absichtlich NICHT behandelt: Schritt 4b unten macht aus jedem '-', das
+    #    nicht zwischen zwei Ziffern steht, ein '_', und der Collapse dampft das
+    #    Ergebnis ein — diese Fälle können also ohnehin nicht überleben.
     s = s.replace("_+_", "+")
-    for combo in ("_,", ",_", "-_", "_-"):
+    for combo in ("_,", ",_"):
         s = s.replace(combo, "_")
     # 4a) Punkt-Datumsangaben normalisieren (vor 4b, damit die erzeugten
     #     Ziffer-Bindestrich-Gruppen dann erhalten bleiben). Volle Form zuerst,
