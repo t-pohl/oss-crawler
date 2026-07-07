@@ -15,6 +15,9 @@ Schritte:
    2b. Restliche lateinische/französische Akzente strippen (``é→e``, ``ç→c``, …).
    2c. Typografische Sonderzeichen normalisieren (En-Dash → ``-``, „/“ entfernen).
 3. exFAT-verbotene Zeichen entfernen (``\\ / : * ? " < > |`` plus 0x00-0x1F).
+   3b. Klammern entfernen: öffnende ``( [ {`` → ``_``, schließende ``) ] }`` →
+       weg (``tabellenaufgabe(loesung)`` → ``tabellenaufgabe_loesung``,
+       ``Projekt(2024)`` → ``Projekt_2024``).
 4. Awkward-Combos aufräumen (``_+_``, ``-_``, ``_-``, ``_,``, ``,_``, ``__``…).
    4a. Punkt-getrennte deutsche Datumsangaben auf Bindestriche normalisieren
        (``21.12.2021`` → ``21-12-2021``, ``05.01.26`` → ``05-01-26``); ein
@@ -80,6 +83,9 @@ _PUNCT_REPLACEMENTS: list[tuple[str, str]] = [
 ]
 
 _FORBIDDEN = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+# Klammern: öffnende ( [ { werden zu "_", schließende ) ] } fallen weg.
+_OPEN_BRACKETS = re.compile(r"[([{]")
+_CLOSE_BRACKETS = re.compile(r"[)\]}]")
 _MULTI_SPACE = re.compile(r" +")
 _MULTI_UNDERSCORE = re.compile(r"_+")
 
@@ -149,6 +155,12 @@ def _core(name: str, *, strip_uuid: bool = True) -> str:
     for src, dst in _PUNCT_REPLACEMENTS:
         s = s.replace(src, dst)
     s = _FORBIDDEN.sub("", s)
+    # 3b) Klammern entfernen: öffnende ( [ { -> "_", schließende ) ] } -> weg.
+    #     Ein dadurch doppelter "_" wird vom Collapse weiter unten eingedampft;
+    #     das Weglassen der schließenden Klammer hält Endpositionen sauber
+    #     ("Projekt(2024)" -> "Projekt_2024").
+    s = _OPEN_BRACKETS.sub("_", s)
+    s = _CLOSE_BRACKETS.sub("", s)
     s = s.replace("_+_", "+")
     for combo in ("_,", ",_", "-_", "_-"):
         s = s.replace(combo, "_")
