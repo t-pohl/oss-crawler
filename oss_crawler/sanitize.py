@@ -4,6 +4,12 @@ Portiert nach Python die Regeln aus
 ``/home/thomas/Repos/linux-config/aliases/alias-scripts/sanitizeNames/sanitizeNames.sh``.
 
 Schritte:
+0. Kanonische UUIDs (``8-4-4-4-12`` Hex, case-insensitive) entfernen. Läuft
+   ganz am Anfang, damit die Bindestriche der UUID nicht vorher in ``_``
+   umgeschrieben werden. Der Duplikat-Schutz passiert beim Aufrufer via
+   :func:`resolve_uuid_names`: kollidieren nach dem Entfernen zwei Geschwister,
+   werden sie per Seriennummer ``_1, _2, …`` unterschieden (die reine Funktion
+   kennt keine Geschwister).
 1. Mehrfache Leerzeichen → ``_``.
 2. Umlaute ersetzen (``ä→ae``, …) — inkl. NFD- und Mojibake-Varianten.
    2b. Restliche lateinische/französische Akzente strippen (``é→e``, ``ç→c``, …).
@@ -26,6 +32,8 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections import defaultdict
+from collections.abc import Callable, Iterable
 
 
 _UMLAUT_REPLACEMENTS: list[tuple[str, str]] = [
@@ -71,6 +79,14 @@ _FORBIDDEN = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 _MULTI_SPACE = re.compile(r" +")
 _MULTI_UNDERSCORE = re.compile(r"_+")
 
+# Kanonische UUID (``8-4-4-4-12`` Hex), case-insensitive. Die Lookarounds
+# stellen sicher, dass wir keinen längeren Hex-Lauf anschneiden.
+_UUID = re.compile(
+    r"(?<![0-9A-Fa-f])"
+    r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}"
+    r"(?![0-9A-Fa-f])"
+)
+
 # Bindestrich ``-`` → ``_``, außer er steht direkt zwischen zwei Ziffern (damit
 # Datumsangaben wie ``2026-06-05`` erhalten bleiben). Die Lookarounds sind
 # nullbreit, sodass sich benachbarte Ziffern-Bindestriche (z. B. ``1-2-3``)
@@ -85,11 +101,26 @@ _EXCEPTIONS = frozenset({
 })
 
 
-def _core(name: str) -> str:
+def contains_uuid(name: str) -> bool:
+    """True, wenn ``name`` eine kanonische UUID enthält (NFC-normalisiert)."""
+    return bool(_UUID.search(unicodedata.normalize("NFC", name)))
+
+
+def _core(name: str, *, strip_uuid: bool = True) -> str:
     # NFC-Normalisierung zuerst: Netzwerk-Shares (Synology/SMB) liefern Namen
     # mal als NFD (z. B. ``ö`` = ``o`` + kombinierendes Trema). Ohne diese
     # Zusammensetzung würden die Umlaut-Ersetzungen unten nicht greifen.
     s = unicodedata.normalize("NFC", name)
+    # 0) UUIDs entfernen — vor allem anderen, damit die UUID-eigenen Bindestriche
+    #    nicht vorher (Schritt 4b) in ``_`` umgeschrieben werden. Etwaige
+    #    Rest-Trennzeichen (``report_.pdf``, ``__``) räumen die Schritte weiter
+    #    unten auf; führende/abschließende ``_`` trimmen wir am Ende (nur wenn
+    #    tatsächlich eine UUID entfernt wurde, um Altverhalten nicht zu ändern).
+    uuid_removed = False
+    if strip_uuid:
+        stripped = _UUID.sub("", s)
+        uuid_removed = stripped != s
+        s = stripped
     s = _MULTI_SPACE.sub("_", s)
     for src, dst in _UMLAUT_REPLACEMENTS:
         s = s.replace(src, dst)
@@ -112,6 +143,10 @@ def _core(name: str) -> str:
     #     dem finalen ``_``-Kollaps, damit ``--`` → ``__`` eingedampft wird.
     s = _HYPHEN_NOT_BETWEEN_DIGITS.sub("_", s)
     s = _MULTI_UNDERSCORE.sub("_", s)
+    # Führende/abschließende ``_`` können durch UUID-Entfernung am Rand entstehen
+    # (``<uuid>_report`` → ``_report``); nur dann trimmen, sonst Altverhalten.
+    if uuid_removed:
+        s = s.strip("_")
     return s
 
 
@@ -126,8 +161,8 @@ def _title_case_word(w: str, *, is_first: bool) -> str:
     return w[:1].upper() + w[1:].lower()
 
 
-def sanitize_dir_name(name: str) -> str:
-    s = _core(name)
+def sanitize_dir_name(name: str, *, strip_uuid: bool = True) -> str:
+    s = _core(name, strip_uuid=strip_uuid)
     if not s:
         return "unnamed"
     parts = s.split("_")
@@ -136,8 +171,8 @@ def sanitize_dir_name(name: str) -> str:
     )
 
 
-def sanitize_file_name(name: str) -> str:
-    s = _core(name).lower()
+def sanitize_file_name(name: str, *, strip_uuid: bool = True) -> str:
+    s = _core(name, strip_uuid=strip_uuid).lower()
     # Ein Unterstrich direkt vor der Dateiendung ist unerwünscht, z. B.
     # ``test_.txt`` → ``test.txt`` und ``notes_.tar.gz`` → ``notes.tar.gz``,
     # während ``test_a.txt`` unverändert bleibt.
@@ -145,3 +180,75 @@ def sanitize_file_name(name: str) -> str:
     if s.endswith("_"):
         s = s[:-1]
     return s or "unnamed"
+
+
+def _insert_serial(base: str, n: int, *, is_file: bool) -> str:
+    """Hängt eine Seriennummer ``_n`` an — bei Dateien vor die Endung."""
+    if is_file and "." in base:
+        stem, ext = base.rsplit(".", 1)
+        return f"{stem}_{n}.{ext}"
+    return f"{base}_{n}"
+
+
+def resolve_uuid_serials(
+    entries: list[tuple[str, bool, str]],
+    *,
+    is_file: bool,
+    reserved: Iterable[str] = frozenset(),
+) -> list[str]:
+    """Löst UUID-Kollisionen innerhalb einer Charge per Seriennummer auf.
+
+    ``entries`` ist eine Liste ``(stripped_name, had_uuid, sort_key)``.
+    UUID-behaftete Einträge, die sich denselben ``stripped_name`` teilen (>=2),
+    erhalten Seriennummern ``_1, _2, …`` in aufsteigender ``sort_key``-Reihenfolge;
+    alle übrigen Einträge behalten ihren ``stripped_name``.
+
+    Jede Seriennummer wählt die nächste, deren Name noch nicht belegt ist — durch
+    einen nicht-serialisierten (z. B. UUID-losen) Geschwistereintrag, eine andere
+    Seriennummer oder ``reserved`` (zusätzlich zu meidende Namen, z. B. bereits
+    auf der Platte vorhandene Dateien).
+    """
+    result = [e[0] for e in entries]
+    groups: dict[str, list[int]] = defaultdict(list)
+    for i, (s, had, _k) in enumerate(entries):
+        if had:
+            groups[s].append(i)
+    serial_idxs = {i for idxs in groups.values() if len(idxs) >= 2 for i in idxs}
+    # Namen, die unverändert bleiben (UUID-lose Geschwister, eindeutige Einträge)
+    # plus die vom Aufrufer reservierten Namen.
+    claimed = {result[i] for i in range(len(result)) if i not in serial_idxs}
+    claimed |= set(reserved)
+    for s, idxs in groups.items():
+        if len(idxs) < 2:
+            continue
+        n = 0
+        for i in sorted(idxs, key=lambda i: entries[i][2]):
+            while True:
+                n += 1
+                cand = _insert_serial(s, n, is_file=is_file)
+                if cand not in claimed:
+                    break
+            result[i] = cand
+            claimed.add(cand)
+    return result
+
+
+def resolve_uuid_names(
+    names: Iterable[str],
+    sanitizer: Callable[..., str],
+) -> list[str]:
+    """Sanitisiert eine Geschwister-Charge und entfernt UUIDs konfliktbewusst.
+
+    Für jeden Namen wird die UUID entfernt; kollidieren die Ergebnisse zweier
+    (oder mehr) UUID-behafteter Einträge derselben Charge, werden diese per
+    Seriennummer ``_1, _2, …`` unterschieden (siehe :func:`resolve_uuid_serials`).
+
+    ``sanitizer`` ist :func:`sanitize_file_name` oder :func:`sanitize_dir_name`.
+    Die Auflösung ist rein chargen-basiert (nicht Platten-basiert) und damit
+    über Läufe hinweg deterministisch — wichtig für den inkrementellen Skip.
+    """
+    names = list(names)
+    entries = [(sanitizer(n, strip_uuid=True), contains_uuid(n), n) for n in names]
+    return resolve_uuid_serials(
+        entries, is_file=(sanitizer is sanitize_file_name)
+    )

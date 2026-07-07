@@ -26,7 +26,7 @@ from playwright.sync_api import (
 )
 from rich.console import Console
 
-from .sanitize import sanitize_dir_name, sanitize_file_name
+from .sanitize import resolve_uuid_names, sanitize_dir_name, sanitize_file_name
 
 console = Console()
 
@@ -297,8 +297,10 @@ def _download_folder(
     # leere Folder-Ordner für OSS-Folder ohne Dateien.
     folder_subdir.mkdir(parents=True, exist_ok=True)
 
-    for f in files:
-        filename = sanitize_file_name(f["name"])
+    # UUIDs aus den Dateinamen entfernen, aber bei Kollision innerhalb dieser
+    # Ordner-Charge die UUID behalten (Duplikat-Schutz, deterministisch).
+    filenames = resolve_uuid_names([f["name"] for f in files], sanitize_file_name)
+    for f, filename in zip(files, filenames):
         if not filename:
             continue
         target = folder_subdir / filename
