@@ -110,6 +110,8 @@ _EXCEPTIONS = frozenset({
     "und", "oder", "von", "zu", "in", "mit", "auf", "fuer",
     "aus", "der", "die", "das", "dem", "den", "des",
     "am", "im", "zum",
+    "bei", "beim", "an", "durch", "als", "zur", "ein", "einem",
+    "einer", "eines", "eine", "anhand", "vom", "vor", "um",
 })
 
 
