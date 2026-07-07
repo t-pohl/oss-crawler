@@ -16,6 +16,10 @@ Schritte:
    2c. Typografische Sonderzeichen normalisieren (En-Dash → ``-``, „/“ entfernen).
 3. exFAT-verbotene Zeichen entfernen (``\\ / : * ? " < > |`` plus 0x00-0x1F).
 4. Awkward-Combos aufräumen (``_+_``, ``-_``, ``_-``, ``_,``, ``,_``, ``__``…).
+   4a. Punkt-getrennte deutsche Datumsangaben auf Bindestriche normalisieren
+       (``21.12.2021`` → ``21-12-2021``, ``05.01.26`` → ``05-01-26``); ein
+       abschließender Kurz-Datumspunkt (``30.10.`` → ``30-10``) fällt nur, wenn
+       kein Buchstabe/Ziffer folgt, damit eine echte Endung (``2.5.pdf``) bleibt.
    4b. Bindestrich ``-`` → ``_``, außer er steht direkt zwischen zwei Ziffern
        (``2026-06-05`` bleibt, ``Albert-schweitzer`` → ``Albert_Schweitzer``).
 5. Casing:
@@ -93,6 +97,14 @@ _UUID = re.compile(
 # nicht gegenseitig verbrauchen.
 _HYPHEN_NOT_BETWEEN_DIGITS = re.compile(r"(?<![0-9])-|-(?![0-9])")
 
+# Punkt-getrennte deutsche Datumsangaben auf Bindestriche normalisieren. Erst die
+# volle Form ``D.D.YY(YY)``, dann eine abschließende Kurzform ``D.D.`` — deren
+# Punkt fällt nur, wenn kein Buchstabe/Ziffer folgt (Lookahead), damit eine echte
+# Dateiendung wie ``2.5.pdf`` erhalten bleibt. Die entstehenden Ziffer-Bindestrich-
+# Gruppen bleiben von ``_HYPHEN_NOT_BETWEEN_DIGITS`` unberührt.
+_DATE_FULL = re.compile(r"([0-9]{1,2})\.([0-9]{1,2})\.([0-9]{2,4})")
+_DATE_TRAILING = re.compile(r"([0-9]{1,2})\.([0-9]{1,2})\.(?![0-9A-Za-z])")
+
 # Deutsche Funktionswörter, die in Verzeichnisnamen klein bleiben (außer am Anfang).
 _EXCEPTIONS = frozenset({
     "und", "oder", "von", "zu", "in", "mit", "auf", "fuer",
@@ -138,6 +150,11 @@ def _core(name: str, *, strip_uuid: bool = True) -> str:
     s = s.replace("_+_", "+")
     for combo in ("_,", ",_", "-_", "_-"):
         s = s.replace(combo, "_")
+    # 4a) Punkt-Datumsangaben normalisieren (vor 4b, damit die erzeugten
+    #     Ziffer-Bindestrich-Gruppen dann erhalten bleiben). Volle Form zuerst,
+    #     dann die abschließende Kurzform.
+    s = _DATE_FULL.sub(r"\1-\2-\3", s)
+    s = _DATE_TRAILING.sub(r"\1-\2", s)
     # 4b) Bindestrich → Unterstrich, außer zwischen zwei Ziffern. Vor dem Casing,
     #     damit Wortgrenzen (Verzeichnisse) neu großgeschrieben werden, und vor
     #     dem finalen ``_``-Kollaps, damit ``--`` → ``__`` eingedampft wird.
