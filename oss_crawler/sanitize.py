@@ -15,7 +15,9 @@ Schritte:
      großgeschriebene oder numerische Tokens (Abkürzungen) bleiben
      unverändert, und deutsche Funktionswörter werden nicht am Anfang
      kleingeschrieben.
-   - Datei: komplett kleingeschrieben.
+   - Datei: komplett kleingeschrieben; ein Unterstrich direkt vor der
+     Dateiendung wird entfernt (``test_.txt`` → ``test.txt``,
+     ``notes_.tar.gz`` → ``notes.tar.gz``, aber ``test_a.txt`` bleibt).
 6. Leeres Ergebnis → ``unnamed``.
 """
 from __future__ import annotations
@@ -123,7 +125,11 @@ def sanitize_dir_name(name: str) -> str:
 
 
 def sanitize_file_name(name: str) -> str:
-    s = _core(name)
-    if not s:
-        return "unnamed"
-    return s.lower()
+    s = _core(name).lower()
+    # Ein Unterstrich direkt vor der Dateiendung ist unerwünscht, z. B.
+    # ``test_.txt`` → ``test.txt`` und ``notes_.tar.gz`` → ``notes.tar.gz``,
+    # während ``test_a.txt`` unverändert bleibt.
+    s = s.replace("_.", ".")
+    if s.endswith("_"):
+        s = s[:-1]
+    return s or "unnamed"
