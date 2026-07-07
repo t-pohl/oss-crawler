@@ -10,6 +10,8 @@ Schritte:
    2c. Typografische Sonderzeichen normalisieren (En-Dash → ``-``, „/“ entfernen).
 3. exFAT-verbotene Zeichen entfernen (``\\ / : * ? " < > |`` plus 0x00-0x1F).
 4. Awkward-Combos aufräumen (``_+_``, ``-_``, ``_-``, ``_,``, ``,_``, ``__``…).
+   4b. Bindestrich ``-`` → ``_``, außer er steht direkt zwischen zwei Ziffern
+       (``2026-06-05`` bleibt, ``Albert-schweitzer`` → ``Albert_Schweitzer``).
 5. Casing:
    - Verzeichnis: ``Upper_Snake_Case`` mit zwei Ausnahmen — komplett
      großgeschriebene oder numerische Tokens (Abkürzungen) bleiben
@@ -69,6 +71,12 @@ _FORBIDDEN = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
 _MULTI_SPACE = re.compile(r" +")
 _MULTI_UNDERSCORE = re.compile(r"_+")
 
+# Bindestrich ``-`` → ``_``, außer er steht direkt zwischen zwei Ziffern (damit
+# Datumsangaben wie ``2026-06-05`` erhalten bleiben). Die Lookarounds sind
+# nullbreit, sodass sich benachbarte Ziffern-Bindestriche (z. B. ``1-2-3``)
+# nicht gegenseitig verbrauchen.
+_HYPHEN_NOT_BETWEEN_DIGITS = re.compile(r"(?<![0-9])-|-(?![0-9])")
+
 # Deutsche Funktionswörter, die in Verzeichnisnamen klein bleiben (außer am Anfang).
 _EXCEPTIONS = frozenset({
     "und", "oder", "von", "zu", "in", "mit", "auf", "fuer",
@@ -99,6 +107,10 @@ def _core(name: str) -> str:
     s = s.replace("_+_", "+")
     for combo in ("_,", ",_", "-_", "_-"):
         s = s.replace(combo, "_")
+    # 4b) Bindestrich → Unterstrich, außer zwischen zwei Ziffern. Vor dem Casing,
+    #     damit Wortgrenzen (Verzeichnisse) neu großgeschrieben werden, und vor
+    #     dem finalen ``_``-Kollaps, damit ``--`` → ``__`` eingedampft wird.
+    s = _HYPHEN_NOT_BETWEEN_DIGITS.sub("_", s)
     s = _MULTI_UNDERSCORE.sub("_", s)
     return s
 
