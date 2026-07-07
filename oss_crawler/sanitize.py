@@ -23,6 +23,9 @@ Schritte:
        (``21.12.2021`` → ``21-12-2021``, ``05.01.26`` → ``05-01-26``); ein
        abschließender Kurz-Datumspunkt (``30.10.`` → ``30-10``) fällt nur, wenn
        kein Buchstabe/Ziffer folgt, damit eine echte Endung (``2.5.pdf``) bleibt.
+       Auch eine blanke Kurzform ``DD.MM`` (``08.05`` → ``08-05``) wird umgesetzt,
+       aber nur bei plausiblem Tag (01-31) / Monat (01-12), sodass Dezimalzahlen
+       wie ``19.99`` unberührt bleiben.
    4b. Bindestrich ``-`` → ``_``, außer er steht direkt zwischen zwei Ziffern
        (``2026-06-05`` bleibt, ``Albert-schweitzer`` → ``Albert_Schweitzer``).
 5. Casing:
@@ -110,6 +113,11 @@ _HYPHEN_NOT_BETWEEN_DIGITS = re.compile(r"(?<![0-9])-|-(?![0-9])")
 # Gruppen bleiben von ``_HYPHEN_NOT_BETWEEN_DIGITS`` unberührt.
 _DATE_FULL = re.compile(r"([0-9]{1,2})\.([0-9]{1,2})\.([0-9]{2,4})")
 _DATE_TRAILING = re.compile(r"([0-9]{1,2})\.([0-9]{1,2})\.(?![0-9A-Za-z])")
+# Blanke Kurzform ``DD.MM`` (ohne Jahr, ohne abschließenden Punkt) — nur wenn sie
+# wie ein echtes Datum aussieht (Tag 01-31, Monat 01-12) und nicht von weiteren
+# Ziffern umgeben ist, damit Dezimalzahlen/Versionen (``19.99``, ``2.5.pdf``,
+# ``1234.56``) unberührt bleiben. Läuft NACH den beiden Regeln oben.
+_DATE_BARE = re.compile(r"(?<!\d)(0[1-9]|[12]\d|3[01])\.(0[1-9]|1[0-2])(?!\d)")
 
 # Deutsche Funktionswörter, die in Verzeichnisnamen klein bleiben (außer am Anfang).
 _EXCEPTIONS = frozenset({
@@ -169,6 +177,7 @@ def _core(name: str, *, strip_uuid: bool = True) -> str:
     #     dann die abschließende Kurzform.
     s = _DATE_FULL.sub(r"\1-\2-\3", s)
     s = _DATE_TRAILING.sub(r"\1-\2", s)
+    s = _DATE_BARE.sub(r"\1-\2", s)
     # 4b) Bindestrich → Unterstrich, außer zwischen zwei Ziffern. Vor dem Casing,
     #     damit Wortgrenzen (Verzeichnisse) neu großgeschrieben werden, und vor
     #     dem finalen ``_``-Kollaps, damit ``--`` → ``__`` eingedampft wird.
