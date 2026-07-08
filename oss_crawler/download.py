@@ -274,7 +274,7 @@ def _download_folder(
     die einzelnen Dateien darin ab. Per-Datei-Skip-Check anhand der
     Dateinamen-Existenz, wie bei Resources.
     """
-    folder_subdir = target_dir / sanitize_dir_name(m.name)
+    folder_subdir = _ci_dir(target_dir, sanitize_dir_name(m.name))
 
     page = context.new_page()
     try:
@@ -365,6 +365,38 @@ def _download_url_shortcut(
         page.close()
 
 
+def _ci_dir(parent: Path, name: str) -> Path:
+    """Löst ``name`` gegen bereits vorhandene Geschwister case-insensitiv auf.
+
+    Auf case-insensitiven Sync-Volumes (Synology Drive, SMB, exFAT) kollidiert
+    ein nur in der Groß-/Kleinschreibung abweichender neuer Ordner mit einem
+    bereits vorhandenen — z. B. produziert der Sanitizer ``10_IT_Sicherheit``
+    (Abkürzung ``IT`` bleibt groß), während vom NAS ein älteres
+    ``10_It_Sicherheit`` gesynct wurde. Der Sync-Client betrachtet beide als
+    denselben Ordner und benennt den frisch angelegten *während des Laufs* um
+    (``…_CaseConflict``), wodurch bereits gecachte Zielpfade ins Leere zeigen
+    und der Download mit ``FileNotFoundError`` abbricht.
+
+    Existiert bereits ein Geschwister mit gleichem Namen (case-insensitiv),
+    verwenden wir dessen tatsächliche Schreibweise, statt einen zweiten
+    Case-Zwilling anzulegen.
+    """
+    try:
+        existing = {p.name.lower(): p.name for p in parent.iterdir() if p.is_dir()}
+    except OSError:
+        existing = {}
+    return parent / existing.get(name.lower(), name)
+
+
+def _resolve_dir_ci(root: Path, *names: str) -> Path:
+    """Baut ``root/names[0]/names[1]/…`` und löst jede Komponente case-insensitiv
+    gegen bereits vorhandene Verzeichnisse auf (siehe :func:`_ci_dir`)."""
+    path = root
+    for name in names:
+        path = _ci_dir(path, name)
+    return path
+
+
 def _prune_empty_dirs_up_to(path: Path, stop_at: Path) -> None:
     """Entfernt ``path``, falls leer; läuft danach im Baum nach oben weiter,
     bis ein nicht-leeres Verzeichnis erreicht wird oder ``stop_at`` ansteht.
@@ -405,11 +437,11 @@ def download_module(
     falls auch der Kurs-Ordner damit leer wird.
     """
     root = root_dir or Path.cwd()
-    target_dir = (
-        root
-        / sanitize_dir_name(school_name)
-        / sanitize_dir_name(course_name)
-        / sanitize_dir_name(module_name)
+    target_dir = _resolve_dir_ci(
+        root,
+        sanitize_dir_name(school_name),
+        sanitize_dir_name(course_name),
+        sanitize_dir_name(module_name),
     )
     target_dir.mkdir(parents=True, exist_ok=True)
     console.log(f"[download] Zielordner: {target_dir}")
