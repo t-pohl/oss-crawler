@@ -36,7 +36,12 @@ Schritte:
    - Datei: komplett kleingeschrieben; ein Unterstrich direkt vor der
      Dateiendung wird entfernt (``test_.txt`` → ``test.txt``,
      ``notes_.tar.gz`` → ``notes.tar.gz``, aber ``test_a.txt`` bleibt).
-6. Leeres Ergebnis → ``unnamed``.
+6. Regel 15: Lässt die UUID-Entfernung nur einen leeren oder versteckten
+   (mit ``.`` beginnenden) Namen übrig, wird ein sichtbarer Stamm vorangestellt
+   (``<uuid>.jpg`` → ``unnamed.jpg`` für Dateien, ``<uuid>`` → ``Unnamed`` für
+   Verzeichnisse). Sonst würde der ``.*``-Prune künftiger Läufe die Datei für
+   immer überspringen.
+7. Leeres Ergebnis → ``unnamed``.
 """
 from __future__ import annotations
 
@@ -134,7 +139,7 @@ def contains_uuid(name: str) -> bool:
     return bool(_UUID.search(unicodedata.normalize("NFC", name)))
 
 
-def _core(name: str, *, strip_uuid: bool = True) -> str:
+def _core(name: str, *, strip_uuid: bool = True) -> tuple[str, bool]:
     # NFC-Normalisierung zuerst: Netzwerk-Shares (Synology/SMB) liefern Namen
     # mal als NFD (z. B. ``ö`` = ``o`` + kombinierendes Trema). Ohne diese
     # Zusammensetzung würden die Umlaut-Ersetzungen unten nicht greifen.
@@ -191,7 +196,7 @@ def _core(name: str, *, strip_uuid: bool = True) -> str:
     # (``<uuid>_report`` → ``_report``); nur dann trimmen, sonst Altverhalten.
     if uuid_removed:
         s = s.strip("_")
-    return s
+    return s, uuid_removed
 
 
 def _title_case_word(w: str, *, is_first: bool) -> str:
@@ -205,24 +210,43 @@ def _title_case_word(w: str, *, is_first: bool) -> str:
     return w[:1].upper() + w[1:].lower()
 
 
+def _unnamed_fallback(s: str, *, uuid_removed: bool, stem: str) -> str:
+    """Regel 15: verhindert, dass die UUID-Entfernung einen leeren oder
+    versteckten (mit ``.`` beginnenden) Namen hinterlässt.
+
+    Bleibt nach dem Strippen nur ``""`` (Name war *nur* eine UUID) oder ein
+    ``.jpg``-artiger Rumpf übrig, würde der ``.*``-Prune künftiger Läufe die
+    Datei für immer überspringen. Wir stellen deshalb einen sichtbaren Stamm
+    (``unnamed`` für Dateien, ``Unnamed`` für Verzeichnisse) voran — aber nur
+    wenn tatsächlich eine UUID entfernt wurde, um das Verhalten für gewöhnliche
+    Namen (inkl. echter versteckter Dateien) unverändert zu lassen.
+    """
+    if uuid_removed and (not s or s.startswith(".")):
+        return stem + s
+    return s
+
+
 def sanitize_dir_name(name: str, *, strip_uuid: bool = True) -> str:
-    s = _core(name, strip_uuid=strip_uuid)
-    if not s:
-        return "unnamed"
-    parts = s.split("_")
-    return "_".join(
-        _title_case_word(p, is_first=(i == 0)) for i, p in enumerate(parts)
-    )
+    s, uuid_removed = _core(name, strip_uuid=strip_uuid)
+    if s:
+        parts = s.split("_")
+        s = "_".join(
+            _title_case_word(p, is_first=(i == 0)) for i, p in enumerate(parts)
+        )
+    s = _unnamed_fallback(s, uuid_removed=uuid_removed, stem="Unnamed")
+    return s or "unnamed"
 
 
 def sanitize_file_name(name: str, *, strip_uuid: bool = True) -> str:
-    s = _core(name, strip_uuid=strip_uuid).lower()
+    s, uuid_removed = _core(name, strip_uuid=strip_uuid)
+    s = s.lower()
     # Ein Unterstrich direkt vor der Dateiendung ist unerwünscht, z. B.
     # ``test_.txt`` → ``test.txt`` und ``notes_.tar.gz`` → ``notes.tar.gz``,
     # während ``test_a.txt`` unverändert bleibt.
     s = s.replace("_.", ".")
     if s.endswith("_"):
         s = s[:-1]
+    s = _unnamed_fallback(s, uuid_removed=uuid_removed, stem="unnamed")
     return s or "unnamed"
 
 
