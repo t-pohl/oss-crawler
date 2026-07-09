@@ -28,6 +28,9 @@ Schritte:
        wie ``19.99`` unberührt bleiben.
    4b. Bindestrich ``-`` → ``_``, außer er steht direkt zwischen zwei Ziffern
        (``2026-06-05`` bleibt, ``Albert-schweitzer`` → ``Albert_Schweitzer``).
+   4c. Aufeinanderfolgende Punkte eindampfen, sodass nie mehr als ein Punkt vor
+       der Endung steht (``2026-06-10..png`` → ``2026-06-10.png``); ein einzelner
+       Punkt (echte Endung) bleibt.
 5. Casing:
    - Verzeichnis: ``Upper_Snake_Case`` mit zwei Ausnahmen — komplett
      großgeschriebene oder numerische Tokens (Abkürzungen) bleiben
@@ -96,6 +99,7 @@ _OPEN_BRACKETS = re.compile(r"[([{]")
 _CLOSE_BRACKETS = re.compile(r"[)\]}]")
 _MULTI_SPACE = re.compile(r" +")
 _MULTI_UNDERSCORE = re.compile(r"_+")
+_MULTI_DOT = re.compile(r"\.{2,}")
 
 # Kanonische UUID (``8-4-4-4-12`` Hex), case-insensitive. Die Lookarounds
 # stellen sicher, dass wir keinen längeren Hex-Lauf anschneiden.
@@ -192,6 +196,9 @@ def _core(name: str, *, strip_uuid: bool = True) -> tuple[str, bool]:
     #     dem finalen ``_``-Kollaps, damit ``--`` → ``__`` eingedampft wird.
     s = _HYPHEN_NOT_BETWEEN_DIGITS.sub("_", s)
     s = _MULTI_UNDERSCORE.sub("_", s)
+    # 4c) Aufeinanderfolgende Punkte eindampfen, damit ein Name nie mehr als
+    #     einen Punkt vor der Endung trägt (2026-06-10..png -> 2026-06-10.png).
+    s = _MULTI_DOT.sub(".", s)
     # Führende/abschließende ``_`` können durch UUID-Entfernung am Rand entstehen
     # (``<uuid>_report`` → ``_report``); nur dann trimmen, sonst Altverhalten.
     if uuid_removed:
