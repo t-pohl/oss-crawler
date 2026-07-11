@@ -137,6 +137,11 @@ _EXCEPTIONS = frozenset({
     "einer", "eines", "eine", "anhand", "vom", "vor", "um",
 })
 
+# Römische Zahlen (I..XXXIX, nur aus I/V/X aufgebaut) → komplett großschreiben.
+# Auf I/V/X beschränkt, damit häufige Wörter, die zufällig gültige volle Zahlen
+# sind (``mix`` → ``MIX``, ``cd``, ``cm``, ``mm``), unberührt bleiben.
+_ROMAN_IVX = re.compile(r"^X?X?X?(IX|IV|V?I?I?I?)$")
+
 
 def contains_uuid(name: str) -> bool:
     """True, wenn ``name`` eine kanonische UUID enthält (NFC-normalisiert)."""
@@ -209,6 +214,10 @@ def _core(name: str, *, strip_uuid: bool = True) -> tuple[str, bool]:
 def _title_case_word(w: str, *, is_first: bool) -> str:
     if not w:
         return w
+    # Römische Zahl (iv, Iv → IV). Zuerst geprüft, damit klein-/gemischt
+    # geschriebene Formen großgeschrieben werden.
+    if _ROMAN_IVX.match(w.upper()):
+        return w.upper()
     if w == w.upper():
         # Abkürzung / nur Zahlen-und-Bindestrich → unverändert.
         return w
