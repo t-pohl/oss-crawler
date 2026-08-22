@@ -23,6 +23,7 @@ from .course import (
     list_courses,
 )
 from .download import DownloadStats, download_module
+from .ignore import IGNORE_FILENAME, dir_variants, load_ignore_list
 from .module import (
     ModuleError,
     find_module,
@@ -136,6 +137,21 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     p.add_argument(
+        "--ignore-file",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help=(
+            "Ignore-Liste: Kurse, Module und Materialien, die nie geladen "
+            f"werden. Default: ./{IGNORE_FILENAME} (bzw. neben der .exe); "
+            "eine fehlende Datei ignoriert nichts. Ein Muster pro Zeile, "
+            "'#' leitet einen Kommentar ein, Glob-Wildcards gelten. Ohne '/' "
+            "matcht ein Muster jede Pfadkomponente ('*.mp4', 'Archiv'), mit "
+            "'/' einen zusammenhängenden Abschnitt des Pfads "
+            "<Schule>/<Kurs>/<Modul>/<Material>."
+        ),
+    )
+    p.add_argument(
         "--target",
         type=Path,
         default=app_dir() / "downloads",
@@ -170,6 +186,13 @@ def _pause_if_frozen() -> None:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     settings = load_settings()
+
+    ignore = load_ignore_list(
+        args.ignore_file or (app_dir() / IGNORE_FILENAME),
+        explicit=args.ignore_file is not None,
+    )
+    if ignore:
+        console.print(f"[dim]Ignoriere: {', '.join(ignore.patterns)}[/dim]")
 
     if args.login and settings.auth_state_path.exists():
         try:
@@ -266,6 +289,27 @@ def main(argv: list[str] | None = None) -> int:
                         finally:
                             oss_page.close()
 
+                    # Ignore-Liste: Kurse aussortieren, bevor ihre Seite
+                    # überhaupt geöffnet wird.
+                    school_comp = dir_variants(school_name)
+                    if ignore:
+                        kept = []
+                        for c in courses_to_process:
+                            if ignore.matches(school_comp, dir_variants(c.name)):
+                                console.print(
+                                    "[yellow]↷ Kurs ignoriert: "
+                                    f"{c.name}[/yellow]"
+                                )
+                            else:
+                                kept.append(c)
+                        courses_to_process = kept
+                        if not courses_to_process:
+                            console.print(
+                                "[yellow]Alle Kurse stehen auf der "
+                                "Ignore-Liste.[/yellow]"
+                            )
+                            return 0
+
                     total = DownloadStats()
                     total_modules = 0
                     for course in courses_to_process:
@@ -298,6 +342,21 @@ def main(argv: list[str] | None = None) -> int:
                         else:
                             modules_to_download = modules
 
+                        if ignore:
+                            course_comp = dir_variants(course.name)
+                            kept_modules = []
+                            for m in modules_to_download:
+                                if ignore.matches(
+                                    school_comp, course_comp, dir_variants(m.name)
+                                ):
+                                    console.print(
+                                        "[yellow]↷ Modul ignoriert: "
+                                        f"{m.name}[/yellow]"
+                                    )
+                                else:
+                                    kept_modules.append(m)
+                            modules_to_download = kept_modules
+
                         total_modules += len(modules_to_download)
                         for m in modules_to_download:
                             console.print(
@@ -321,10 +380,12 @@ def main(argv: list[str] | None = None) -> int:
                                 root_dir=args.target,
                                 url_format=args.url_format,
                                 only_new=args.only_new,
+                                ignore=ignore,
                             )
                             total.new += stats.new
                             total.skipped += stats.skipped
                             total.failed += stats.failed
+                            total.ignored += stats.ignored
 
                     n_courses = len(courses_to_process)
                     if n_courses > 1 or total_modules > 1:
@@ -332,12 +393,14 @@ def main(argv: list[str] | None = None) -> int:
                             f"[green]Gesamt über {n_courses} Kurs(e), "
                             f"{total_modules} Modul(e): {total.new} neu, "
                             f"{total.skipped} übersprungen, "
+                            f"{total.ignored} ignoriert, "
                             f"{total.failed} fehlgeschlagen.[/green]"
                         )
                     else:
                         console.print(
                             f"[green]Download fertig: {total.new} neu, "
                             f"{total.skipped} übersprungen, "
+                            f"{total.ignored} ignoriert, "
                             f"{total.failed} fehlgeschlagen.[/green]"
                         )
                 finally:

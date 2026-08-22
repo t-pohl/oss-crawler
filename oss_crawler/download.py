@@ -26,6 +26,7 @@ from playwright.sync_api import (
 )
 from rich.console import Console
 
+from .ignore import IgnoreList
 from .sanitize import resolve_uuid_names, sanitize_dir_name, sanitize_file_name
 
 console = Console()
@@ -49,6 +50,7 @@ class DownloadStats:
     new: int = 0
     skipped: int = 0
     failed: int = 0
+    ignored: int = 0
 
 
 _MATERIALS_JS = r"""
@@ -266,13 +268,22 @@ _FOLDER_FILES_JS = r"""
 
 
 def _download_folder(
-    context: BrowserContext, m: Material, target_dir: Path, only_new: bool = False
+    context: BrowserContext,
+    m: Material,
+    target_dir: Path,
+    only_new: bool = False,
+    ignore: IgnoreList = IgnoreList(),
+    path_prefix: tuple[tuple[str, ...], ...] = (),
 ) -> DownloadStats:
     """Lädt alle Dateien eines Moodle-Folder-Materials runter.
 
     Erzeugt einen Unterordner ``<m.name>`` im Modul-Zielordner und legt
     die einzelnen Dateien darin ab. Per-Datei-Skip-Check anhand der
     Dateinamen-Existenz, wie bei Resources.
+
+    ``ignore`` greift hier pro Datei; der ganze Folder wird schon vom
+    Aufrufer aussortiert. ``path_prefix`` sind die Pfadkomponenten oberhalb
+    des Folders (Schule/Kurs/Modul/Folder), jeweils als Namensvarianten.
     """
     folder_subdir = _ci_dir(target_dir, sanitize_dir_name(m.name))
 
@@ -305,6 +316,11 @@ def _download_folder(
             continue
         target = folder_subdir / filename
         rel = f"{folder_subdir.name}/{filename}"
+        if ignore.matches(*path_prefix, (f["name"], filename)):
+            stats.ignored += 1
+            if not only_new:
+                console.log(f"[download]  ~ {rel} (ignoriert)")
+            continue
         if target.exists():
             stats.skipped += 1
             if not only_new:
@@ -416,6 +432,16 @@ def _prune_empty_dirs_up_to(path: Path, stop_at: Path) -> None:
         path = path.parent
 
 
+def _is_ignored(
+    ignore: IgnoreList,
+    path_prefix: tuple[tuple[str, ...], ...],
+    raw_name: str,
+    disk_name: str,
+) -> bool:
+    """Prüft ein Material gegen die Ignore-Liste (OSS-Name + Name auf Platte)."""
+    return ignore.matches(*path_prefix, (raw_name, disk_name))
+
+
 def download_module(
     context: BrowserContext,
     page: Page,
@@ -425,11 +451,18 @@ def download_module(
     root_dir: Path | None = None,
     url_format: UrlFormat = "linux",
     only_new: bool = False,
+    ignore: IgnoreList = IgnoreList(),
 ) -> DownloadStats:
     """Lädt alle (neuen) Materialien des aktuell geöffneten Moduls runter.
 
     ``page`` muss auf der section.php-Seite des Moduls sein. Zielordner:
     ``root/<school>/<course>/<module>/`` (alle Komponenten sanitisiert).
+
+    ``ignore`` sortiert einzelne Materialien aus; Schule, Kurs und Modul
+    selbst prüft der Aufrufer, damit ihre Seiten gar nicht erst geöffnet
+    werden. Gematcht wird der Pfad relativ zur ``--target``-Wurzel, jede
+    Komponente sowohl als OSS-Name als auch sanitisiert (siehe
+    :mod:`oss_crawler.ignore`).
 
     Wenn das Modul keine herunterladbaren Materialien enthält (nur Labels,
     leere Folder-Aktivitäten, alle fehlgeschlagen …), wird der angelegte
@@ -437,12 +470,15 @@ def download_module(
     falls auch der Kurs-Ordner damit leer wird.
     """
     root = root_dir or Path.cwd()
-    target_dir = _resolve_dir_ci(
-        root,
-        sanitize_dir_name(school_name),
-        sanitize_dir_name(course_name),
-        sanitize_dir_name(module_name),
+    school_dir = sanitize_dir_name(school_name)
+    course_dir = sanitize_dir_name(course_name)
+    module_dir = sanitize_dir_name(module_name)
+    path_prefix = (
+        (school_name, school_dir),
+        (course_name, course_dir),
+        (module_name, module_dir),
     )
+    target_dir = _resolve_dir_ci(root, school_dir, course_dir, module_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
     console.log(f"[download] Zielordner: {target_dir}")
 
@@ -452,18 +488,42 @@ def download_module(
     for m in materials:
         try:
             if m.modtype == "resource":
+                if _is_ignored(ignore, path_prefix, m.name, _resource_filename(m)):
+                    stats.ignored += 1
+                    if not only_new:
+                        console.log(f"[download]  ~ {m.name} (ignoriert)")
+                    continue
                 path, downloaded = _download_resource(context, m, target_dir)
             elif m.modtype == "url":
+                if _is_ignored(
+                    ignore, path_prefix, m.name, _url_filename(m, url_format)
+                ):
+                    stats.ignored += 1
+                    if not only_new:
+                        console.log(f"[download]  ~ {m.name} (ignoriert)")
+                    continue
                 path, downloaded = _download_url_shortcut(
                     context, m, target_dir, url_format
                 )
             elif m.modtype == "folder":
+                folder_name = sanitize_dir_name(m.name)
+                if _is_ignored(ignore, path_prefix, m.name, folder_name):
+                    stats.ignored += 1
+                    if not only_new:
+                        console.log(f"[download]  ~ {m.name}/ (ignoriert)")
+                    continue
                 folder_stats = _download_folder(
-                    context, m, target_dir, only_new=only_new
+                    context,
+                    m,
+                    target_dir,
+                    only_new=only_new,
+                    ignore=ignore,
+                    path_prefix=path_prefix + ((m.name, folder_name),),
                 )
                 stats.new += folder_stats.new
                 stats.skipped += folder_stats.skipped
                 stats.failed += folder_stats.failed
+                stats.ignored += folder_stats.ignored
                 continue
             else:
                 continue

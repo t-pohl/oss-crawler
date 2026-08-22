@@ -10,3 +10,5 @@ __pycache__/
 # PyInstaller build artifacts
 build/
 dist/
+
+oss-crawler_ignore.txt

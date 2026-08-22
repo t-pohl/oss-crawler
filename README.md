@@ -141,7 +141,8 @@ oss-crawler --school asg --course "8 Informatik 2025-26 GRS" --list-modules
 oss-crawler --school asg --course "8 Informatik 2025-26 GRS" \
     --module "Modellieren und Implementieren"
 #   → "+ <file>" per new download, "= <file> (skip)" per existing,
-#     ending with "Download fertig: N neu, M übersprungen, K fehlgeschlagen."
+#     "~ <file> (ignoriert)" per ignore-list hit, ending with
+#     "Download fertig: N neu, M übersprungen, I ignoriert, K fehlgeschlagen."
 
 # Omit --module to download EVERY module of the course in one shot:
 oss-crawler --school asg --course "8 Informatik 2025-26 GRS"
@@ -184,6 +185,9 @@ Incremental sync: a material is downloaded only if a file with its
 sanitized expected name doesn't already exist in the target folder. Local
 files are never deleted, even if removed on OSS.
 
+Courses, modules and single materials can be excluded via an ignore file —
+see [Ignore list](#ignore-list) below.
+
 Folder and file names follow the rules in
 `oss_crawler/sanitize.py` (a port of
 [`sanitizeNames.sh`](../linux-config/aliases/alias-scripts/sanitizeNames/sanitizeNames.sh)):
@@ -193,6 +197,54 @@ function words kept lowercase), files all lowercase.
 
 In Moodle parlance modules are "sections" (topics/chapters). Extraction is
 format-agnostic across Grid / Topics / Weekly formats.
+
+## Ignore list
+
+Courses, modules and materials that should never be downloaded are listed in
+`oss-crawler_ignore.txt` next to the tool (i.e. in the working directory, or
+beside `oss-crawler.exe` in the standalone build). Point `--ignore-file` at a
+different file to override; a missing file ignores nothing.
+
+The format is the one of
+[`syncSharedMaterials_ignore.txt`](../schule/scripts/syncSharedMaterials/syncSharedMaterials_ignore.txt)
+/ the matsearch (`ms`) ignore file: one pattern per line, `#` starts a comment,
+blank lines are skipped and glob wildcards (`*`, `?`, `[...]`) apply.
+
+- **without `/`** the pattern is matched against every path component, so
+  `*.mp4` skips those files everywhere and `Archiv` every course, module or
+  folder activity of that name;
+- **with `/`** it is matched against the path relative to the `--target` root
+  — `<school>/<course>/<module>/<material>`, with an extra component for files
+  inside a folder activity — where it may cover the whole path or any
+  contiguous stretch of components: `Archiv/Alt` matches that folder anywhere
+  (and everything below it), `Albert*/8 Informatik*/Allgemein` a full path.
+
+Every component is matched against the **OSS name** (as printed by
+`--list-courses` / `--list-modules`) as well as against the **sanitized name on
+disk**, including the file extension — so both `8 Informatik 2025-26 GRS` and
+`8_Informatik_2025-26_GRS` select that course, and `*.pdf` works even though
+the extension is only known once the download name is built. Matching is
+case-insensitive, like `--course` / `--module`.
+
+```text
+# oss-crawler_ignore.txt
+Kollegium*                        # organisational courses, no material
+*.mp4                             # skip large videos everywhere
+Archiv                            # any course/module/folder called "Archiv"
+8 Informatik 2025-26 GRS/Allgemein  # one module of one course
+```
+
+A matching course or module is skipped before its page is even opened, so
+ignoring a course costs nothing. Downloads report ignored items as
+`~ <name> (ignoriert)` and count them separately in the summary line
+(`--only-new` suppresses those lines just like the `(skip)` ones).
+
+`--list-schools`, `--list-courses` and `--list-modules` are **not** filtered:
+they show what OSS offers, so you can still see the name of something you have
+ignored (and keep the one-name-per-line contract for scripting).
+
+An ignored item is only left out of future runs; files downloaded by earlier
+runs stay where they are — nothing is ever deleted.
 
 ## How login works
 
