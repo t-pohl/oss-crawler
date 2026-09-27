@@ -18,7 +18,7 @@ Schritte:
    3b. Klammern entfernen: öffnende ``( [ {`` → ``_``, schließende ``) ] }`` →
        weg (``tabellenaufgabe(loesung)`` → ``tabellenaufgabe_loesung``,
        ``Projekt(2024)`` → ``Projekt_2024``).
-4. Awkward-Combos aufräumen (``_+_``, ``-_``, ``_-``, ``_,``, ``,_``, ``__``…).
+4. Awkward-Combos aufräumen (``_+_``, ``-_``, ``_-``, ``_,``, ``,_``, ``_｜_``, ``__``…).
    4a. Punkt-getrennte deutsche Datumsangaben auf Bindestriche normalisieren
        (``21.12.2021`` → ``21-12-2021``, ``05.01.26`` → ``05-01-26``); ein
        abschließender Kurz-Datumspunkt (``30.10.`` → ``30-10``) fällt nur, wenn
@@ -188,7 +188,7 @@ def _core(name: str, *, strip_uuid: bool = True) -> tuple[str, bool]:
     #    nicht zwischen zwei Ziffern steht, ein '_', und der Collapse dampft das
     #    Ergebnis ein — diese Fälle können also ohnehin nicht überleben.
     s = s.replace("_+_", "+")
-    for combo in ("_,", ",_"):
+    for combo in ("_,", ",_", "_｜_"):
         s = s.replace(combo, "_")
     # 4a) Punkt-Datumsangaben normalisieren (vor 4b, damit die erzeugten
     #     Ziffer-Bindestrich-Gruppen dann erhalten bleiben). Volle Form zuerst,
