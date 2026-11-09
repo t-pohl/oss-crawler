@@ -60,6 +60,23 @@ _UMLAUT_REPLACEMENTS: list[tuple[str, str]] = [
     ("ß", "ss"),
 ]
 
+# CP866-Mojibake zurück zum echten Zeichen. Ubuntus gepatchtes ``unzip``
+# ignoriert das UTF-8-Flag eines Zips und dekodiert die Namen als CP866, so wird
+# jedes UTF-8-Byte zu einem Rahmen-/Kyrillisch-Zeichen („ö“ = C3 B6 → „├╢“,
+# „–“ = E2 80 93 → „тАУ“). Auch die Formen nach dem Kleinschreiben eines früheren
+# Laufs („тАУ“ → „тау“) sind enthalten. Läuft VOR den Umlaut- und
+# Interpunktionsregeln (die dann das echte Zeichen sehen) und vor der „ф“-Regel,
+# die sonst „таф“ (kleingeschriebener Em-Dash) anfressen würde. „├д“ deckt ä und
+# ein kleingeschriebenes Ä ab. „├“ + Kyrillisch bzw. „тА“/„та“ kommt in echtem
+# Text nicht vor.
+_CP866_REPAIRS: list[tuple[str, str]] = [
+    ("├д", "ä"), ("├╢", "ö"), ("├╝", "ü"), ("├Д", "Ä"), ("├Ц", "Ö"),
+    ("├Ь", "Ü"), ("├Я", "ß"), ("├ц", "ö"), ("├ь", "ü"), ("├я", "ß"),
+    ("тАУ", "–"), ("тау", "–"), ("тАФ", "—"), ("таф", "—"),
+    ("тАЮ", "„"), ("таю", "„"), ("тАЬ", "“"), ("таь", "“"),
+    ("тАЭ", "”"), ("таэ", "”"), ("тАЩ", "’"), ("тащ", "’"),
+]
+
 # Kaputte/Mojibake-Umlaut-Kodierungen aus fehlerhaften Codepage-Round-Trips.
 # Nur diese Fälle treten in echten Daten auf:
 #  - ``ü`` als ``u`` + mis-dekodiertes kombinierendes Trema (U+2560 U+0438, „╠и“);
@@ -89,6 +106,7 @@ _ACCENT_REPLACEMENTS: list[tuple[str, str]] = [
 # Streunende typografische Interpunktion normalisieren.
 _PUNCT_REPLACEMENTS: list[tuple[str, str]] = [
     ("–", "-"),   # En-Dash → Bindestrich
+    ("—", "-"),   # Em-Dash → Bindestrich
     ("„", ""),    # dt. untere Anführungszeichen → entfernen
     ("“", ""),    # linkes Anführungszeichen → entfernen
 ]
@@ -164,6 +182,8 @@ def _core(name: str, *, strip_uuid: bool = True) -> tuple[str, bool]:
         uuid_removed = stripped != s
         s = stripped
     s = _MULTI_SPACE.sub("_", s)
+    for src, dst in _CP866_REPAIRS:
+        s = s.replace(src, dst)
     for src, dst in _UMLAUT_REPLACEMENTS:
         s = s.replace(src, dst)
     # NFD-Varianten (z. B. ``o`` + kombinierendes Trema) sind durch die
